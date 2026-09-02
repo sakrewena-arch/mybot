@@ -18,9 +18,16 @@ const providerSchema = z.object({
 });
 
 const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  BOT_TOKEN: z.string().min(1, 'BOT_TOKEN is required'),
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  NODE_ENV: z
+    .preprocess((value) => (typeof value === 'string' ? value.trim() : value), z.enum(['development', 'test', 'production']).default('development')),
+  BOT_TOKEN: z
+    .string()
+    .trim()
+    .min(1, 'BOT_TOKEN is required (token from @BotFather)'),
+  DATABASE_URL: z
+    .string()
+    .trim()
+    .min(1, 'DATABASE_URL is required'),
   // OPENAI_API_KEY is required only when AI_PROVIDERS_JSON is not used.
   OPENAI_API_KEY: z.string().optional().transform(emptyToUndefined),
   ADMIN_IDS: z.string().default(''),
