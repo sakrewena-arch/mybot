@@ -37,14 +37,18 @@ function resolveDatabaseUrl() {
     return fromPgVars;
   }
 
+  // Debug aid: show which db-related environment variables are actually present
+  // on the host (names only, never values).
+  const related = Object.keys(process.env).filter(
+    (key) => key === 'DATABASE_URL' || /^(PG|POSTGRES_)/.test(key),
+  );
   console.error('\n✖ DATABASE_URL is not defined.\n');
-  console.error('  Local:     copy .env.example to .env and fill DATABASE_URL.');
-  console.error('  Railway:   create a PostgreSQL database and LINK it to this service,');
-  console.error('             or add DATABASE_URL as a literal variable:');
-  console.error('             Service → Variables → New Variable → add the connection URL.');
+  console.error(`  Database-related env vars found on this host: ${related.length > 0 ? related.join(', ') : '(none — the PostgreSQL is NOT linked to this service)'}\n`);
+  console.error('  Railway:   create a PostgreSQL database in the SAME project as this');
+  console.error('             service, then add DATABASE_URL as a LITERAL variable:');
+  console.error('             Service → Variables → New Variable → paste the connection URL.');
   console.error('             (See README section 10.1 for details and screenshots.)');
-  console.error('  Render:    link the PostgreSQL instance (DATABASE_URL is injected).');
-  console.error('\nThe bot cannot start without a database.\n');
+  console.error('  Render:    link the PostgreSQL instance (DATABASE_URL is injected).\n');
   process.exit(1);
 }
 
