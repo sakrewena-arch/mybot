@@ -1,0 +1,37 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Deploy: New + → Blueprint → sélectionner ce repo
+services:
+  - type: web
+    name: mybot
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BOT_TOKEN
+        sync: false # réglé dans le dashboard (section Environment)
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: POLLING_MODE
+        value: webhook
+      - key: WEBHOOK_URL
+        sync: false # https://<votre-app>.onrender.com/telegram/webhook
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: MEDIA_TRIGGER_MODE
+        value: ai
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mybot-db
+          property: connectionString
+
+databases:
+  - name: mybot-db
+    plan: free
+    databaseName: mybot
+    user: mybot

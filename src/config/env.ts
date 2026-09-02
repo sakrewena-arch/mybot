@@ -42,6 +42,13 @@ const envSchema = z.object({
   HISTORY_LIMIT: z.coerce.number().int().positive().default(20),
   DEFAULT_LANGUAGE: z.string().default('en'),
   PREFER_LANGUAGE: z.enum(['en', 'user']).default('en'),
+  OPENAI_BASE_URL: z
+    .string()
+    .optional()
+    .transform(emptyToUndefined)
+    .refine((value) => value === undefined || z.string().url().safeParse(value).success, {
+      message: 'OPENAI_BASE_URL must be a valid URL when provided',
+    }),
   MEDIA_COOLDOWN_MINUTES: z.coerce.number().int().min(0).default(30),
   MEDIA_MESSAGE_THRESHOLD: z.coerce.number().int().min(0).default(10),
   MEDIA_TRIGGER_MODE: z.enum(['none', 'message_count', 'time', 'ai', 'manual']).default('ai'),
@@ -70,6 +77,7 @@ export interface EnvConfig {
   historyLimit: number;
   defaultLanguage: string;
   preferLanguage: PreferLanguage;
+  openaiBaseUrl: string | undefined;
   mediaCooldownMs: number;
   mediaMessageThreshold: number;
   mediaTriggerMode: MediaTriggerMode;
@@ -120,6 +128,7 @@ function loadEnv(): EnvConfig {
     historyLimit: raw.HISTORY_LIMIT,
     defaultLanguage: raw.DEFAULT_LANGUAGE,
     preferLanguage: raw.PREFER_LANGUAGE,
+    openaiBaseUrl: raw.OPENAI_BASE_URL,
     mediaCooldownMs: raw.MEDIA_COOLDOWN_MINUTES * 60 * 1000,
     mediaMessageThreshold: raw.MEDIA_MESSAGE_THRESHOLD,
     mediaTriggerMode: raw.MEDIA_TRIGGER_MODE,

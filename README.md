@@ -438,49 +438,52 @@ Ensure the domain serves HTTPS with a valid certificate so Telegram can reach
 
 ---
 
-## 10.1 Déploiement sur Railway (guide détaillé)
+## 10.1 Déploiement sur Render (guide détaillé)
 
-Le projet est prêt pour Railway (`railway.json` fourni : Nixpacks, `npm run
-build`, `npm run start`).
+Le projet est prêt pour Render (`render.yaml` fourni : Blueprint, build
+`npm run build`, start `npm run start`, health `/health`, PostgreSQL lié).
 
-### 1. Créer le dépôt Git et le pousser sur GitHub
+> ⚠️ **Limites du plan gratuit Render** (à connaître avant de commencer)
+> - **Web Service gratuit** : l'instance s'endort après **15 min sans trafic**
+>   (`spins down`). Pour un bot qui doit répondre **en continu**, c'est fragile.
+>   → Soit un **keep-alive** (ping `/health` toutes les ~5 min via
+>   [cron-job.org](https://cron-job.org) ou UptimeRobot), soit le plan **Starter
+>   ~7 $/mois** (sans sommeil) — recommandé dès que le bot génère des revenus Stars.
+> - **PostgreSQL gratuit Render** : base **mono-instance**, **expire après 30
+>   jours**. Pour de la production, préférez le Postgres payant ou une base
+>   externe gratuite ([Neon](https://neon.tech) free 5 Go, [Supabase](https://supabase.com) free).
+
+### 1. Pousser le projet sur GitHub
 
 ```bash
 cd mybot
-git init
-git add .
-git commit -m "init: Telegram Business bot"
-```
-
-⚠️ **Vérifiez** que le `.env` réel n'est **pas** commité — il est dans
-`.gitignore`. Seul `.env.example` doit apparaître dans le dépôt.
-
-Créez un dépôt privé sur GitHub (cf. `<votre-utilisateur>/mybot`) puis :
-
-```bash
-git remote add origin git@github.com:<votre-utilisateur>/mybot.git
+git remote add origin https://github.com/<votre-utilisateur>/mybot.git
 git branch -M main
 git push -u origin main
 ```
 
-### 2. Créer le service Railway
+> ⚠️ Le `.env` réel est ignoré (`.gitignore`). Seul `.env.example` part en Git.
 
-1. Connectez-vous sur <https://railway.app> → **New Project**.
-2. Choisissez **Deploy from GitHub repo** et sélectionnez votre dépôt.
-   (Autorisez l'accès de Railway à ce dépôt si demandé.)
-3. Railway détecte `railway.json` → **Nixpacks** + build + start.
+### 2. Créer le Web Service (Blueprint)
 
-### 3. Ajouter PostgreSQL
+**Option A — Blueprint (recommandé, utilise `render.yaml`)**
 
-1. Dans le projet, bouton **➕ New** (ou **Plugin**) → **PostgreSQL**.
-2. Railway crée une base et injecte automatiquement la variable
-   **`DATABASE_URL`** dans le service du bot.
-3. Au démarrage, `npm run start` exécute `prisma migrate deploy` qui applique
-   les migrations automatiquement (les tables sont créées toutes seules).
+1. [render.com](https://render.com) → **New +** → **Blueprint**.
+2. Connectez GitHub si besoin, choisissez le dépôt `mybot`.
+3. Render crée **automatiquement** le Web Service `mybot` **et** la base
+   `mybot-db`, avec `DATABASE_URL` déjà branchée.
 
-### 4. Ajouter les variables d'environnement du bot
+**Option B — Manuel**
 
-Dans le service (onglet **Variables**), ajoutez :
+1. **New +** → **Web Service** → connectez GitHub → sélectionnez `mybot`.
+2. **Runtime** : `Node`. **Build Command** : `npm run build`.
+   **Start Command** : `npm run start`. **Health Check Path** : `/health`.
+3. **New +** → **PostgreSQL** → puis dans le Web Service, **link** la base
+   (onglet Environment, `DATABASE_URL` s'ajoute automatiquement).
+
+### 3. Variables d'environnement
+
+Dans le Web Service → **Environment**, ajoutez :
 
 | Variable | Valeur |
 |---|---|
@@ -488,48 +491,58 @@ Dans le service (onglet **Variables**), ajoutez :
 | `BOT_TOKEN` | votre token (de @BotFather) |
 | `OPENAI_API_KEY` | votre clé OpenAI |
 | `ADMIN_IDS` | votre ID Telegram (ex. `7445208820`) |
-| `POLLING_MODE` | `webhook` |
-| `WEBHOOK_URL` | `https://<votre-app>.up.railway.app/telegram/webhook` |
+| `POLLING_MODE` | `webhook` (ou `polling`, voir plus bas) |
+| `WEBHOOK_URL` | `https://<votre-app>.onrender.com/telegram/webhook` |
 | `WEBHOOK_SECRET` | une longue chaîne aléatoire |
 | `MEDIA_TRIGGER_MODE` | `ai` (ou `message_count` / `time` / etc.) |
 
-`DATABASE_URL` est fourni par le plugin PostgreSQL, vous n'avez pas besoin de la
-saisir.
+`DATABASE_URL` est injectée par le lien avec la base — ne la saisissez pas.
 
-Le domaine public Railway (`<votre-app>.up.railway.app`) s'affiche dans l'onglet
-**Settings → Networking → Custom Domain / Networking Domain**. C'est cette URL
-que `WEBHOOK_URL` doit refléter.
+L'URL publique Render est : **Settings → Domains** (ex.
+`https://mybot.onrender.com`). Utilisez-la pour `WEBHOOK_URL`.
 
-### 5. Lancer le déploiement
+### 4. Déployer et vérifier
 
-Railway redéploie automatiquement à chaque `git push`. Pour redéployer
-manuellement : onglet **Deployments** → **Deploy** / **Redeploy**.
-
-Vérifiez dans les logs :
+- Render redéploie à chaque `git push`. Bouton **Manual Deploy → Deploy** sinon.
+- Logs attendus :
 ```
 database connection ok
 bot settings ready
 webhook registered
 webhook server listening
 ```
+- `GET https://<votre-app>.onrender.com/health` → `{"status":"ok"}`.
 
-### 6. Vérifier le health check
+### 5. Garder l'instance éveillée (plan gratuit)
 
-Railway surveille `GET /health` (configuré dans `railway.json`) →
-`{"status":"ok"}`.
+Créez un ping toutes les 5 minutes sur :
+```text
+https://<votre-app>.onrender.com/health
+```
+Avec [cron-job.org](https://cron-job.org) (gratuit) ou UptimeRobot. Cela évite
+que le service s'endorme entre deux messages. Pour un bot Business fiable,
+le plan **Starter** est recommandé.
+
+### 6. Polling vs webhook
+
+- **Webhook** : Telegram pousse l'update vers `WEBHOOK_URL`. Nécessite un service
+  éveillé (keep-alive ou plan payant).
+- **Polling** : le bot tire les updates lui-même (sortant). Sur Render gratuit,
+  l'instance peut quand même s'endormir → gardez le keep-alive. C'est plus simple
+  à mettre en place (pas de `WEBHOOK_URL`).
 
 ### 7. En cas de problème
 
-- **`prisma migrate deploy` échoue** → vérifiez la variable `DATABASE_URL`
-  (le plugin fournit la bonne) et que le service bot a bien été **lié** au
-  plugin PostgreSQL.
-- **`postinstall`/`prebuild` exécutent `prisma generate`** automatiquement ;
-  si le build échoue avec Prisma, vérifiez que `prisma` est dans
-  `dependencies` (déjà le cas) et non seulement en dev.
-- **Mode webhook** : le webhook est enregistré automatiquement au démarrage ;
-  si vous redéployez, `drop_pending_updates: true` purge les updates en attente.
-- **Mode polling** (si vous préférez) : `POLLING_MODE=polling` suffit,
-  n'utilisez alors pas `WEBHOOK_URL` ; le bot récupère les updates en continu.
+- **`prisma migrate deploy` échoue** → vérifiez que `DATABASE_URL` est bien la
+  valeur interne fournie par le lien de base, et que la base n'a pas expiré
+  (plan gratuit 30 j).
+- **`prisma generate` au build** → `postinstall`/`prebuild` le lancent
+  automatiquement ; `prisma` est dans `dependencies` (déjà le cas).
+- **Webhook erroné** (`webhook is not set` / `Conflict`) → vérifiez
+  `WEBHOOK_URL` + `WEBHOOK_SECRET` (+34 caractères) et redéployez.
+- **Le bot ne répond pas** alors que le log est propre → vérifiez que le compte
+  Business a bien accordé **can_reply** et que la conversation est < 24 h
+  (contrainte Telegram).
 
 ---
 

@@ -98,7 +98,10 @@ export function createBot(): Bot {
     allowedChatIds: env.allowedChatIds,
   });
 
-  const openai = new OpenAI({ apiKey: env.openaiApiKey });
+  const openai = new OpenAI({
+    apiKey: env.openaiApiKey,
+    ...(env.openaiBaseUrl ? { baseURL: env.openaiBaseUrl } : {}),
+  });
   const responseService = createResponseService({
     openai,
     config: {
