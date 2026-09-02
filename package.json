@@ -12,7 +12,7 @@
     "prebuild": "prisma generate",
     "build": "tsc -p tsconfig.build.json",
     "postinstall": "prisma generate",
-    "start": "node scripts/migrate.mjs && node dist/index.js",
+    "start": "node scripts/bootstrap.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev --name init",
     "prisma:deploy": "prisma migrate deploy",
