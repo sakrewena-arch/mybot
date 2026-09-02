@@ -26,9 +26,28 @@ function buildDatabaseUrlFromPgVars() {
   return `postgresql://${auth}@${host}:${port}/${db}?sslmode=require`;
 }
 
+function safeSummary(url) {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return '(malformed DATABASE_URL)';
+  }
+}
+
 function resolveDatabaseUrl() {
   const fromUrl = (process.env.DATABASE_URL ?? '').trim();
-  if (fromUrl) return fromUrl;
+  if (fromUrl) {
+    console.log(`Using DATABASE_URL host: ${safeSummary(fromUrl)}`);
+    if (fromUrl.includes('.railway.internal')) {
+      console.warn(
+        'HINT: postgres.railway.internal only resolves if the bot service and the',
+        'database are in the SAME Railway project. Otherwise use the public proxy',
+        'host (xxx.up.railway.app) version of the URL.',
+      );
+    }
+    return fromUrl;
+  }
 
   const fromPgVars = buildDatabaseUrlFromPgVars();
   if (fromPgVars) {
