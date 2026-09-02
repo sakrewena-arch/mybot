@@ -354,6 +354,45 @@ Every mode is gated by `MEDIA_COOLDOWN_MINUTES` (default 30).
 - It may only reference an existing `mediaId`; the server **re-validates it
   against the database** before anything is sent.
 - The model is explicitly instructed it may not invent products or prices.
+
+### Relais multi-fournisseurs IA (failover automatique)
+
+Le bot peut utiliser **plusieurs fournisseurs IA en relais** : si l'un atteint son
+quota (erreur `429`, solde insuffisant `402`, surcharge `529/503`, panne 5xx),
+il est mis en **pause temporaire** (backoff) et le **fournisseur suivant répond
+à sa place**, pendant que le quota du premier se recharge. La discussion n'est
+jamais coupée : le contexte est reconstruit depuis la base à chaque message,
+donc le fil est préservé quel que soit celui qui répond.
+
+**Config — mode simple (1 fournisseur)**
+```ini
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.deepseek.com
+AI_MODEL=deepseek-chat
+```
+
+**Config — mode relais (2+ fournisseurs)**
+```ini
+# Laisser OPENAI_API_KEY/OPENAI_BASE_URL vides, utiliser AI_PROVIDERS_JSON :
+AI_PROVIDERS_JSON=[
+  {"name":"deepseek","apiKey":"sk-...","baseUrl":"https://api.deepseek.com","model":"deepseek-chat","supportsJsonMode":true},
+  {"name":"groq","apiKey":"gsk_...","baseUrl":"https://api.groq.com/openai/v1","model":"llama-3.3-70b-versatile","supportsJsonMode":false},
+  {"name":"gemini","apiKey":"AIza...","baseUrl":"https://generativelanguage.googleapis.com/v1beta/openai/","model":"gemini-2.0-flash","supportsJsonMode":true}
+]
+```
+- `supportsJsonMode:false` : le fournisseur ne gère pas `response_format
+  json_object` (cas Groq) — le bot extrait alors le JSON directement depuis le
+  texte de la réponse (robuste aux fences markdown).
+- Ordre = priorité. Rotation round-robin entre fournisseurs sains pour répartir
+  la charge.
+- Backoff appliqué : 1 min (429/529/503), 30 min (402 solde), exponentiel
+  plafonné à 10 min (erreurs réseau/5xx).
+- Si **tous** les fournisseurs sont épuisés, le bot répond un message de
+  secours poli au lieu de planter : *« Give me one second, my brain is
+  recharging 😅 »*.
+
+**Statut** : les bascules et mises en pause sont journalisées (pino) avec le
+nom du fournisseur, l'erreur et le backoff appliqué.
 ---
 
 ## 7. Administration

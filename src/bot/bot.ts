@@ -1,5 +1,4 @@
 import { Bot } from 'grammy';
-import OpenAI from 'openai';
 import { prisma } from '../database/prisma.js';
 import { env } from '../config/env.js';
 import type { ApiLike } from '../types/telegram.js';
@@ -98,17 +97,10 @@ export function createBot(): Bot {
     allowedChatIds: env.allowedChatIds,
   });
 
-  const openai = new OpenAI({
-    apiKey: env.openaiApiKey,
-    ...(env.openaiBaseUrl ? { baseURL: env.openaiBaseUrl } : {}),
-  });
   const responseService = createResponseService({
-    openai,
-    config: {
-      model: env.aiModel,
-      temperature: env.aiTemperature,
-      maxTokens: env.aiMaxTokens,
-    },
+    providers: env.aiProviders,
+    temperature: env.aiTemperature,
+    maxTokens: env.aiMaxTokens,
   });
 
   // ── handlers ────────────────────────────────────────────────

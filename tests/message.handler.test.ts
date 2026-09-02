@@ -170,6 +170,7 @@ function buildDeps(overrides: Partial<BusinessMessageHandlerDeps> = {}) {
       shouldSendPaidMedia: false,
       mediaId: null,
       reason: null,
+      provider: 'test',
     })),
   };
 
@@ -268,6 +269,7 @@ describe('business_message handling', () => {
       shouldSendPaidMedia: true,
       mediaId: 2,
       reason: 'the user asked for more content',
+      provider: 'test',
     });
 
     await handleBusinessMessage(makeCtx('Show me something cool'), h.deps);
@@ -288,6 +290,7 @@ describe('business_message handling', () => {
       shouldSendPaidMedia: true,
       mediaId: 999,
       reason: 'suggestion',
+      provider: 'test',
     });
     h.mediaService.selectForUser.mockResolvedValue(null);
 
@@ -314,6 +317,7 @@ describe('business_message handling', () => {
       shouldSendPaidMedia: true,
       mediaId: 2,
       reason: 'second offer',
+      provider: 'test',
     });
     const media2: ActiveMedia = {
       id: 2,

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import type { AiProviderConfig } from '../ai/provider-router.js';
 
 export type NodeEnv = 'development' | 'test' | 'production';
 export type MediaTriggerMode = 'none' | 'message_count' | 'time' | 'ai' | 'manual';
@@ -7,6 +8,14 @@ export type PreferLanguage = 'en' | 'user';
 
 const emptyToUndefined = (value: string | undefined): string | undefined =>
   value === undefined || value.trim() === '' ? undefined : value.trim();
+
+const providerSchema = z.object({
+  name: z.string().min(1),
+  apiKey: z.string().min(1, 'apiKey is required'),
+  baseUrl: z.string().url(),
+  model: z.string().min(1),
+  supportsJsonMode: z.boolean().default(true),
+});
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -78,6 +87,7 @@ export interface EnvConfig {
   defaultLanguage: string;
   preferLanguage: PreferLanguage;
   openaiBaseUrl: string | undefined;
+  aiProviders: AiProviderConfig[];
   mediaCooldownMs: number;
   mediaMessageThreshold: number;
   mediaTriggerMode: MediaTriggerMode;
@@ -96,6 +106,43 @@ function parseIdList(raw: string): number[] {
       }
       return id;
     });
+}
+
+/** Builds the ordered list of AI providers (failover sequence). */
+function parseAiProviders(raw: RawEnv): AiProviderConfig[] {
+  const rawJson = (process.env.AI_PROVIDERS_JSON ?? '').trim();
+
+  if (rawJson.length > 0) {
+    let value: unknown;
+    try {
+      value = JSON.parse(rawJson) as unknown;
+    } catch {
+      throw new Error('AI_PROVIDERS_JSON is not valid JSON');
+    }
+    const parsed = z.array(providerSchema).safeParse(value);
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((issue) => `  - ${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('\n');
+      throw new Error(`Invalid AI_PROVIDERS_JSON:\n${issues}`);
+    }
+    const unique = new Set(parsed.data.map((p) => p.name));
+    if (unique.size !== parsed.data.length) {
+      throw new Error('AI_PROVIDERS_JSON provider names must be unique');
+    }
+    return parsed.data;
+  }
+
+  // Legacy: single provider configured via OPENAI_* variables.
+  return [
+    {
+      name: 'primary',
+      apiKey: raw.OPENAI_API_KEY,
+      baseUrl: raw.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
+      model: raw.AI_MODEL,
+      supportsJsonMode: true,
+    },
+  ];
 }
 
 function loadEnv(): EnvConfig {
@@ -129,6 +176,7 @@ function loadEnv(): EnvConfig {
     defaultLanguage: raw.DEFAULT_LANGUAGE,
     preferLanguage: raw.PREFER_LANGUAGE,
     openaiBaseUrl: raw.OPENAI_BASE_URL,
+    aiProviders: parseAiProviders(raw),
     mediaCooldownMs: raw.MEDIA_COOLDOWN_MINUTES * 60 * 1000,
     mediaMessageThreshold: raw.MEDIA_MESSAGE_THRESHOLD,
     mediaTriggerMode: raw.MEDIA_TRIGGER_MODE,

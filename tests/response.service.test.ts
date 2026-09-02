@@ -2,6 +2,15 @@ import { describe, it, expect, vi } from 'vitest';
 import type OpenAI from 'openai';
 import { createResponseService } from '../src/ai/response.service.js';
 import type { GenerateReplyInput } from '../src/ai/response.service.js';
+import type { AiProviderConfig } from '../src/ai/provider-router.js';
+
+const providerConfig: AiProviderConfig = {
+  name: 'primary',
+  apiKey: 'test-key',
+  baseUrl: 'https://api.openai.com/v1',
+  model: 'gpt-4o-mini',
+  supportsJsonMode: true,
+};
 
 function baseInput(overrides: Partial<GenerateReplyInput> = {}): GenerateReplyInput {
   return {
@@ -26,23 +35,27 @@ function baseInput(overrides: Partial<GenerateReplyInput> = {}): GenerateReplyIn
 }
 
 function makeService(completion: unknown) {
-  const openai = {
+  const fakeOpenAI = {
     chat: {
       completions: {
         create: vi.fn(async () => completion),
       },
     },
   } as unknown as OpenAI;
+
   const service = createResponseService({
-    openai,
-    config: { model: 'gpt-4o-mini', temperature: 0.8, maxTokens: 400 },
+    providers: [providerConfig],
+    createClient: () => fakeOpenAI,
+    temperature: 0.8,
+    maxTokens: 400,
   });
-  return service;
+
+  return { service, fakeOpenAI };
 }
 
 describe('response service (AI generation)', () => {
   it('parses a strict JSON reply with a media decision', async () => {
-    const service = makeService({
+    const { service } = makeService({
       choices: [
         {
           message: {
@@ -59,10 +72,11 @@ describe('response service (AI generation)', () => {
     expect(result.shouldSendPaidMedia).toBe(true);
     expect(result.mediaId).toBe(2);
     expect(result.reason).toBe('fits the topic');
+    expect(result.provider).toBe('primary');
   });
 
   it('defaults to no media decision when keys are absent', async () => {
-    const service = makeService({
+    const { service } = makeService({
       choices: [{ message: { content: '{"reply":"Got it"}' } }],
     });
 
@@ -75,7 +89,7 @@ describe('response service (AI generation)', () => {
   });
 
   it('passes plain text through when json mode is disabled', async () => {
-    const service = makeService({
+    const { service } = makeService({
       choices: [{ message: { content: 'Just relaxing a little 😊' } }],
     });
 
@@ -83,10 +97,55 @@ describe('response service (AI generation)', () => {
 
     expect(result.text).toBe('Just relaxing a little 😊');
     expect(result.shouldSendPaidMedia).toBe(false);
+    expect(result.provider).toBe('primary');
+  });
+
+  it('extracts JSON even when wrapped in markdown fences', async () => {
+    const { service } = makeService({
+      choices: [
+        { message: { content: '```json\n{"reply":"ok","shouldSendPaidMedia":false}\n```' } },
+      ],
+    });
+
+    const result = await service.generateReply(baseInput());
+
+    expect(result.text).toBe('ok');
+    expect(result.shouldSendPaidMedia).toBe(false);
+  });
+
+  it('extracts JSON from a provider that does not support json mode', async () => {
+    const { service } = makeService({
+      choices: [
+        { message: { content: 'Sure! Here it is:\n{"reply":"here","shouldSendPaidMedia":false,"mediaId":null,"reason":""}' } },
+      ],
+    });
+
+    const primary = { ...providerConfig, supportsJsonMode: false, name: 'nojson' };
+    const service2 = createResponseService({
+      providers: [primary],
+      createClient: () => ({
+        chat: {
+          completions: {
+            create: vi.fn(async () => ({
+              choices: [
+                { message: { content: 'Sure! {"reply":"here","shouldSendPaidMedia":false}' } },
+              ],
+            })),
+          },
+        },
+      }) as unknown as OpenAI,
+      temperature: 0.8,
+      maxTokens: 400,
+    });
+
+    const result = await service2.generateReply(baseInput());
+    expect(result.shouldSendPaidMedia).toBe(false);
+    expect(result.provider).toBe('nojson');
+    void service;
   });
 
   it('falls back gracefully when the model returns non-JSON in json mode', async () => {
-    const service = makeService({
+    const { service } = makeService({
       choices: [{ message: { content: '```json\nnot really json' } }],
     });
 
@@ -96,11 +155,12 @@ describe('response service (AI generation)', () => {
     expect(result.shouldSendPaidMedia).toBe(false);
   });
 
-  it('throws when the model returns an empty completion', async () => {
-    const service = makeService({ choices: [{ message: { content: '' } }] });
+  it('returns a graceful fallback when the model returns an empty completion', async () => {
+    const { service } = makeService({ choices: [{ message: { content: '' } }] });
 
-    await expect(service.generateReply(baseInput())).rejects.toMatchObject({
-      code: 'AI_EMPTY_REPLY',
-    });
+    const result = await service.generateReply(baseInput());
+
+    expect(result.provider).toBe('none');
+    expect(result.text.length).toBeGreaterThan(0);
   });
 });
