@@ -1,0 +1,23 @@
+# PostgreSQL used during development.
+# Start it with:  docker compose up -d
+# Stop it with:   docker compose down
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mybot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mybot
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: mybot
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mybot -d mybot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  postgres_data:

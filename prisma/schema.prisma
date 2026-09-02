@@ -1,0 +1,181 @@
+// ─────────────────────────────────────────────────────────────
+// mybot — Prisma schema
+// PostgreSQL. Telegram-originated numeric ids are stored as strings
+// because Telegram ids exceed the safe JS integer range (> 2^53).
+// ─────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MessageDirection {
+  IN
+  OUT
+}
+
+enum MediaType {
+  PHOTO
+  VIDEO
+}
+
+enum MediaTriggerType {
+  MESSAGE_COUNT
+  TIME
+  AI
+  MANUAL
+  NONE
+}
+
+enum MediaProposalStatus {
+  SENT
+  SKIPPED
+  FAILED
+}
+
+/// A person who writes to the business account.
+model User {
+  id           Int      @id @default(autoincrement())
+  telegramId   String   @unique
+  username     String?
+  firstName    String?  @map("first_name")
+  lastName     String?  @map("last_name")
+  languageCode String?  @map("language_code")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  conversations Conversation[]
+  purchases     Purchase[]
+  mediaProposals MediaProposal[]
+
+  @@map("users")
+}
+
+/// Telegram Business connection (update `business_connection`).
+model BusinessConnection {
+  id                   Int      @id @default(autoincrement())
+  businessConnectionId String   @unique @map("business_connection_id")
+  businessUserId       String   @map("business_user_id")
+  userChatId           String   @map("user_chat_id")
+  isEnabled            Boolean  @default(true) @map("is_enabled")
+  canReply             Boolean  @default(false) @map("can_reply")
+  /// Full BusinessBotRights object received from Telegram (JSON snapshot).
+  permissions          Json     @default("{}")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  conversations Conversation[]
+
+  @@map("business_connections")
+}
+
+/// One ongoing chat between a user and the business account.
+model Conversation {
+  id                   Int      @id @default(autoincrement())
+  userId               Int      @map("user_id")
+  businessConnectionId Int      @map("business_connection_id")
+  chatId               String   @map("chat_id")
+  lastMessageAt        DateTime @default(now()) @map("last_message_at")
+  messageCount         Int      @default(0) @map("message_count")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessConnection BusinessConnection @relation(fields: [businessConnectionId], references: [id], onDelete: Cascade)
+  messages       Message[]
+  mediaProposals MediaProposal[]
+
+  @@unique([businessConnectionId, chatId])
+  @@map("conversations")
+}
+model Purchase {
+  id                       Int      @id @default(autoincrement())
+  userId                   Int      @map("user_id")
+  mediaId                  Int      @map("media_id")
+  /// Set for invoice-based stars payments (bot invoices). Paid media
+  /// purchases are reported by Telegram without a charge id.
+  telegramPaymentChargeId  String?  @map("telegram_payment_charge_id")
+  amountStars              Int      @map("amount_stars")
+  createdAt                DateTime @default(now()) @map("created_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  media Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, mediaId])
+  @@index([userId])
+  @@index([mediaId])
+  @@map("purchases")
+}
+
+/// Tracked history of paid media proposals (used by triggers/cooldown/stats).
+model MediaProposal {
+  id             Int                 @id @default(autoincrement())
+  userId         Int                 @map("user_id")
+  mediaId        Int                 @map("media_id")
+  conversationId Int?                @map("conversation_id")
+  status         MediaProposalStatus @default(SENT)
+  reason         String?
+  sentAt         DateTime            @default(now()) @map("sent_at")
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  media        Media        @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([userId, sentAt])
+  @@index([mediaId])
+  @@map("media_proposals")
+}
+
+/// Singleton settings row (always id = 1).
+model BotSettings {
+  id              Int      @id @default(1)
+  systemPrompt    String
+  enabled         Boolean  @default(true)
+  defaultLanguage String   @default("en")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("bot_settings")
+}
+
+/// Inbound and outbound messages of a conversation.
+model Message {
+  id                Int               @id @default(autoincrement())
+  conversationId    Int               @map("conversation_id")
+  telegramMessageId Int?              @map("telegram_message_id")
+  direction         MessageDirection  @default(IN)
+  text              String
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+/// A payable media item offered via sendPaidMedia.
+model Media {
+  id              Int               @id @default(autoincrement())
+  title           String
+  description    String?
+  type            MediaType
+  telegramFileId String            @map("telegram_file_id")
+  thumbnailFileId String?          @map("thumbnail_file_id")
+  priceStars      Int               @map("price_stars")
+  active          Boolean           @default(true)
+  triggerType    MediaTriggerType  @default(MESSAGE_COUNT) @map("trigger_type")
+  /// Optional per-media threshold, e.g. 25 messages for this specific media.
+  triggerValue    Int?              @map("trigger_value")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  deletedAt       DateTime?         @map("deleted_at")
+
+  purchases     Purchase[]
+  mediaProposals MediaProposal[]
+
+  @@map("media")
+}
