@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import { execSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 
 /**
  * Pre-start bootstrap.
@@ -83,4 +82,6 @@ try {
 }
 
 console.log('Migrations applied. Starting the bot…');
-await import(pathToFileURL(new URL('../dist/index.js', import.meta.url)).href);
+// `import()` accepts a URL string directly; passing an URL instance to
+// pathToFileURL() throws ERR_INVALID_ARG_TYPE on newer Node versions.
+await import(new URL('../dist/index.js', import.meta.url).href);
