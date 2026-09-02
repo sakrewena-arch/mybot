@@ -477,7 +477,96 @@ Ensure the domain serves HTTPS with a valid certificate so Telegram can reach
 
 ---
 
-## 10.1 Déploiement sur Render (guide détaillé)
+## 10.1 Déploiement sur Railway (guide détaillé)
+
+Le projet est prêt pour Railway (`railway.json` fourni : Nixpacks, build
+`npm run build`, start `npm run start`). Le démarrage passe par
+`scripts/migrate.mjs` qui applique les migrations puis lance le bot ; si
+`DATABASE_URL` est manquante, il affiche un message clair au lieu de crasher.
+
+### 1. Pousser le projet sur GitHub
+
+```bash
+cd mybot
+git remote add origin https://github.com/<votre-utilisateur>/mybot.git
+git branch -M main
+git push -u origin main
+```
+
+> ⚠️ Le `.env` réel est ignoré (`.gitignore`). Seul `.env.example` part en Git.
+
+### 2. Créer le service Railway
+
+1. [railway.app](https://railway.app) → **New Project** → connectez GitHub.
+2. **Deploy from GitHub repo** → sélectionnez `mybot`.
+3. Railway détecte `railway.json` → **Nixpacks** + build + start.
+
+### 3. ⚠️ Créer ET LIER la base PostgreSQL (cause n°1 du crash)
+
+C'est exactement le crash que vous avez vu (`Environment variable not found:
+DATABASE_URL`). Railway n'injecte `DATABASE_URL` QUE si la base est **liée**
+au service.
+
+**Railway (nouvelle interface) :**
+1. Dans le projet, **New** → **Database** → **Add PostgreSQL**.
+2. Ouvrez le **Web Service** du bot → onglet **Variables**.
+3. **New Variable** → **Add Reference** → choisissez votre base PostgreSQL →
+   sélectionnez `DATABASE_URL` → **Add**.
+4. Redéployez (**Deploy** → **Redeploy**).
+
+**Railway (ancienne interface) :**
+1. **New** → **Database** → **PostgreSQL**.
+2. Depuis la base : **Link Service** → choisissez le service du bot
+   (cela ajoute automatiquement `DATABASE_URL` aux variables du bot).
+
+### 4. Autres variables d'environnement
+
+Dans le service (onglet **Variables**), ajoutez :
+
+| Variable | Valeur |
+|---|---|
+| `NODE_ENV` | `production` |
+| `BOT_TOKEN` | votre token (de @BotFather) |
+| `AI_PROVIDERS_JSON` | votre JSON de fournisseurs IA (ou `OPENAI_API_KEY`) |
+| `ADMIN_IDS` | votre ID Telegram (ex. `7445208820`) |
+| `POLLING_MODE` | `webhook` (ou `polling`, voir section 6) |
+| `WEBHOOK_URL` | `https://<votre-app>.up.railway.app/telegram/webhook` |
+| `WEBHOOK_SECRET` | une longue chaîne aléatoire |
+| `MEDIA_TRIGGER_MODE` | `ai` (ou `message_count` / `time` / etc.) |
+
+> `AI_PROVIDERS_JSON` doit tenir sur **une seule ligne** (exactement comme dans
+> `.env`). Exemple :
+> `[{"name":"deepseek","apiKey":"sk-...","baseUrl":"https://api.deepseek.com","model":"deepseek-chat","supportsJsonMode":true},{"name":"groq","apiKey":"gsk_...","baseUrl":"https://api.groq.com/openai/v1","model":"llama-3.3-70b-versatile","supportsJsonMode":false}]`
+
+### 5. Déployer et vérifier
+
+- Railway redéploie à chaque `git push` ; sinon **Manual Deploy → Deploy**.
+- Logs attendus :
+```
+Applying database migrations…
+✔ …migrations applied
+database connection ok
+bot settings ready
+```
+- `GET https://<votre-app>.up.railway.app/health` → `{"status":"ok"}`.
+
+### 6. En cas de problème
+
+- **`DATABASE_URL` not found** → vous n'avez pas **lié** la base au service
+  (étape 3). Vérifiez aussi que la base Railway n'a pas été supprimée.
+- **Base gratuite Railway** : elle peut être supprimée si inactive → créez une
+  nouvelle base et reliez-la (ou utilisez une base externe gratuite Neon).
+- **Building…** échec Prisma → `npm install`/`prebuild` exécutent
+  `prisma generate` ; si `DATABASE_URL` n'existe pas encore, le build peut
+  échouer → liez d'abord la base, puis redéployez.
+- **Webhook** : le webhook s'enregistre au démarrage avec `WEBHOOK_URL` ;
+  si l'URL change, mettez-la à jour et redéployez.
+- **Polling** : `POLLING_MODE=polling` + pas de `WEBHOOK_URL` → le bot
+  long-poll tout seul (plus simple pour démarrer).
+
+---
+
+## 10.2 Déploiement sur Render (guide détaillé)
 
 Le projet est prêt pour Render (`render.yaml` fourni : Blueprint, build
 `npm run build`, start `npm run start`, health `/health`, PostgreSQL lié).
