@@ -21,7 +21,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   BOT_TOKEN: z.string().min(1, 'BOT_TOKEN is required'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required'),
+  // OPENAI_API_KEY is required only when AI_PROVIDERS_JSON is not used.
+  OPENAI_API_KEY: z.string().optional().transform(emptyToUndefined),
   ADMIN_IDS: z.string().default(''),
   PORT: z.coerce.number().int().min(1).default(3000),
   POLLING_MODE: z.enum(['polling', 'webhook']).default('polling'),
@@ -134,6 +135,11 @@ function parseAiProviders(raw: RawEnv): AiProviderConfig[] {
   }
 
   // Legacy: single provider configured via OPENAI_* variables.
+  if (!raw.OPENAI_API_KEY) {
+    throw new Error(
+      'No AI provider configured: set AI_PROVIDERS_JSON (multi-provider mode) or OPENAI_API_KEY (single-provider mode).',
+    );
+  }
   return [
     {
       name: 'primary',
@@ -159,7 +165,7 @@ function loadEnv(): EnvConfig {
     nodeEnv: raw.NODE_ENV,
     botToken: raw.BOT_TOKEN,
     databaseUrl: raw.DATABASE_URL,
-    openaiApiKey: raw.OPENAI_API_KEY,
+    openaiApiKey: raw.OPENAI_API_KEY ?? '',
     adminIds: new Set(parseIdList(raw.ADMIN_IDS)),
     port: raw.PORT,
     pollingMode: raw.POLLING_MODE,
