@@ -15,6 +15,7 @@ import type { UserProfile } from '../../ai/prompt.service.js';
 import { isChatAllowed } from './permissions.js';
 import { isCooldownElapsed } from '../../media/selection.js';
 import { toErrorMessage } from '../../utils/errors.js';
+import { humanReplyDelayMs, sleep } from '../../utils/human.js';
 import { logger } from '../../utils/logger.js';
 
 export interface BusinessMessageHandlerDeps {
@@ -131,6 +132,14 @@ export async function handleBusinessMessage(
       (media) => !ownedMediaIds.has(media.id),
     );
 
+    const startedAt = Date.now();
+    // Show "typing…" on the business chat while the AI thinks and "writes".
+    void deps.api.sendChatAction?.({
+      business_connection_id: msg.business_connection_id,
+      chat_id: msg.chat.id,
+      action: 'typing',
+    })?.catch(() => undefined);
+
     const aiReply = await deps.responseService.generateReply({
       settings: {
         systemPrompt: settings.systemPrompt,
@@ -142,6 +151,27 @@ export async function handleBusinessMessage(
       catalog,
       mediaDecisionMode: deps.env.mediaTriggerMode === 'ai',
     });
+
+    // Human-like writing time: wait so the total gap between the user message
+    // and the reply feels natural (longer replies take longer), and keep the
+    // typing indicator alive while we wait.
+    const elapsedMs = Date.now() - startedAt;
+    const targetDelayMs = humanReplyDelayMs(aiReply.text.length, deps.env.humanize);
+    if (targetDelayMs > elapsedMs) {
+      const waitMs = targetDelayMs - elapsedMs;
+      const typingLoop = setInterval(() => {
+        void deps.api.sendChatAction?.({
+          business_connection_id: msg.business_connection_id,
+          chat_id: msg.chat.id,
+          action: 'typing',
+        })?.catch(() => undefined);
+      }, 4_500);
+      try {
+        await sleep(waitMs);
+      } finally {
+        clearInterval(typingLoop);
+      }
+    }
 
     const sent = await deps.api.sendMessage({
       business_connection_id: msg.business_connection_id,

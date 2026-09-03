@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { z } from 'zod';
-import { AppError } from '../utils/errors.js';
+import { AppError, toErrorMessage } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { buildConversationMessages, type ChatMessage } from './conversation.service.js';
 import type { HistoryTurn, MediaCatalogEntry, UserProfile } from './prompt.service.js';
@@ -43,7 +43,21 @@ const NO_MEDIA_DECISION: Pick<AiReply, 'shouldSendPaidMedia' | 'mediaId' | 'reas
   reason: null,
 };
 
-const GRACEFUL_FALLBACK = 'Give me one second, my brain is recharging 😅';
+/**
+ * Natural, human-sounding fallbacks used when EVERY AI provider is down.
+ * These intentionally avoid any "AI / brain / system" wording so the account
+ * keeps looking like a real person even in a worst-case outage.
+ */
+const HUMAN_FALLBACKS = [
+  'Sorry, I missed that — my connection just dropped 😅 Could you say it again?',
+  'Ahh my phone froze for a second there 😅 What were you saying?',
+  'Hey, sorry! I was in the middle of something. Can you repeat that?',
+  'Oops, that one got cut off on my end… wanna try once more?',
+];
+
+function pickHumanFallback(): string {
+  return HUMAN_FALLBACKS[Math.floor(Math.random() * HUMAN_FALLBACKS.length)]!;
+}
 
 /**
  * Robust JSON extraction: some OpenAI-compatible providers don't support
@@ -79,6 +93,13 @@ function extractJsonObject(content: string): unknown | null {
 
 export interface ResponseService {
   generateReply(input: GenerateReplyInput): Promise<AiReply>;
+  /**
+   * Cheap connectivity self-test for every configured provider.
+   * Used at startup to surface bad keys / URLs / balances in the logs.
+   */
+  diagnoseProviders(): Promise<
+    Array<{ name: string; ok: boolean; error?: string; model?: string }>
+  >;
 }
 
 function defaultCreateClient(config: AiProviderConfig): OpenAI {
@@ -134,7 +155,8 @@ export function createResponseService(deps: {
     if (parsed === null) {
       logger.warn({ provider: config.name, content }, 'AI returned non-JSON in json mode');
       return {
-        text: content.replace(/^```(?:json)?\s*|\s*```$/g, '').trim() || GRACEFUL_FALLBACK,
+        text:
+          content.replace(/^```(?:json)?\s*|\s*```$/g, '').trim() || pickHumanFallback(),
         ...NO_MEDIA_DECISION,
       };
     }
@@ -170,10 +192,35 @@ export function createResponseService(deps: {
             .map((s) => `${s.name}: ${s.ready ? 'ready' : 'quota'}`)
             .join(', ');
           logger.warn({ details }, 'all AI providers exhausted');
-          return { text: GRACEFUL_FALLBACK, ...NO_MEDIA_DECISION, provider: 'none' };
+          return { text: pickHumanFallback(), ...NO_MEDIA_DECISION, provider: 'none' };
         }
         throw error;
       }
+    },
+
+    async diagnoseProviders() {
+      const results: Array<{ name: string; ok: boolean; error?: string; model?: string }> = [];
+      for (const config of deps.providers) {
+        try {
+          const client = deps.createClient
+            ? deps.createClient(config)
+            : defaultCreateClient(config);
+          await client.chat.completions.create({
+            model: config.model,
+            max_tokens: 1,
+            messages: [{ role: 'user', content: 'ping' }],
+          });
+          results.push({ name: config.name, ok: true, model: config.model });
+        } catch (error) {
+          results.push({
+            name: config.name,
+            ok: false,
+            model: config.model,
+            error: toErrorMessage(error),
+          });
+        }
+      }
+      return results;
     },
   };
 }

@@ -27,6 +27,7 @@ import { registerStartCommand } from './commands/start.js';
 import { registerHelpCommand } from './commands/help.js';
 import { registerAdminCommands } from './commands/admin.js';
 import { logger } from '../utils/logger.js';
+import { toErrorMessage } from '../utils/errors.js';
 
 /** Adapter between the bot API and our narrowly-typed `ApiLike`. */
 function buildApiAdapter(bot: Bot): ApiLike {
@@ -62,6 +63,13 @@ function buildApiAdapter(bot: Bot): ApiLike {
         args.chat_id,
         args.message_id,
       );
+    },
+    sendChatAction(args) {
+      return bot.api.sendChatAction(args.chat_id, args.action as never, {
+        ...(args.business_connection_id
+          ? { business_connection_id: args.business_connection_id }
+          : {}),
+      });
     },
   };
 }
@@ -141,6 +149,29 @@ export function createBot(): Bot {
   bot.catch((error) => {
     logger.error({ error: error.message, ctx: error.ctx?.update.update_id }, 'bot error');
   });
+
+  // Non-blocking startup self-test of the AI providers (bad key / URL /
+  // balance surfaces in the logs immediately, before the first real message).
+  void responseService
+    .diagnoseProviders()
+    .then((results) => {
+      for (const r of results) {
+        if (r.ok) {
+          logger.info({ provider: r.name, model: r.model }, 'AI provider ok');
+        } else {
+          logger.warn(
+            { provider: r.name, model: r.model, error: r.error },
+            'AI provider misconfigured or unreachable',
+          );
+        }
+      }
+    })
+    .catch((error: unknown) =>
+      logger.warn(
+        { error: toErrorMessage(error) },
+        'AI provider diagnosis failed',
+      ),
+    );
 
   // Expose the classic commands to users who message the bot directly.
   bot.api

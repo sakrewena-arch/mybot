@@ -20,6 +20,18 @@ async function main(): Promise<void> {
 
   const bot = createBot();
 
+  // Diagnostic: verify each AI provider can actually be reached (bad key /
+  // URL / balance shows up here at startup instead of only at reply time).
+  void bot.api
+    .getMe()
+    .then((me) => logger.info({ botUsername: me.username }, 'bot identity confirmed'))
+    .catch((error: unknown) =>
+      logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'getMe failed',
+      ),
+    );
+
   if (env.pollingMode === 'webhook') {
     if (!env.webhookUrl) {
       throw new Error('POLLING_MODE=webhook requires WEBHOOK_URL');

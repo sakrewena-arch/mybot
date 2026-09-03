@@ -182,6 +182,7 @@ function buildDeps(overrides: Partial<BusinessMessageHandlerDeps> = {}) {
     mediaCooldownMs: 30 * 60 * 1000,
     mediaTimeMs: 240 * 60 * 1000,
     mediaMessageThreshold: 10,
+    humanize: { enabled: false, baseMs: 0, extraMaxMs: 0, msPerChar: 0, maxMs: 0 },
   };
 
   const deps: BusinessMessageHandlerDeps = {
@@ -345,6 +346,7 @@ describe('business_message handling', () => {
         mediaCooldownMs: 0,
         mediaTimeMs: 0,
         mediaMessageThreshold: 10,
+        humanize: { enabled: false, baseMs: 0, extraMaxMs: 0, msPerChar: 0, maxMs: 0 },
       } as unknown as EnvConfig,
     });
     d.deps.conversationService.recordInbound = vi.fn(async () => ({

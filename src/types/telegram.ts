@@ -51,4 +51,15 @@ export interface ApiLike {
     chat_id: number;
     message_id: number;
   }): Promise<true>;
+
+  /**
+   * Shows a chat-action indicator (e.g. "typing") on behalf of a business
+   * connection. The exact list of allowed actions depends on the scope the
+   * business account granted the bot.
+   */
+  sendChatAction?(args: {
+    business_connection_id?: string;
+    chat_id: number | string;
+    action: string;
+  }): Promise<unknown>;
 }

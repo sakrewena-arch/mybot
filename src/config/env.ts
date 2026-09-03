@@ -9,6 +9,15 @@ export type PreferLanguage = 'en' | 'user';
 const emptyToUndefined = (value: string | undefined): string | undefined =>
   value === undefined || value.trim() === '' ? undefined : value.trim();
 
+/** Parses env booleans literally: "false"/"0"/"no" → false, anything else truthy-ish → true. */
+const booleanFromEnv = (value: unknown, fallback = true): boolean => {
+  if (typeof value !== 'string') return fallback;
+  const v = value.trim().toLowerCase();
+  if (v === 'true' || v === '1' || v === 'yes' || v === 'on') return true;
+  if (v === 'false' || v === '0' || v === 'no' || v === 'off') return false;
+  return fallback;
+};
+
 const providerSchema = z.object({
   name: z.string().min(1),
   apiKey: z.string().min(1, 'apiKey is required'),
@@ -70,6 +79,14 @@ const envSchema = z.object({
   MEDIA_MESSAGE_THRESHOLD: z.coerce.number().int().min(0).default(10),
   MEDIA_TRIGGER_MODE: z.enum(['none', 'message_count', 'time', 'ai', 'manual']).default('ai'),
   MEDIA_TIME_MINUTES: z.coerce.number().int().min(0).default(240),
+  // ── Human-like behaviour ────────────────────────────────────────────
+  // Adds a typing indicator + a proportional delay before replying so the
+  // account feels human. Disable with HUMANIZE_ENABLED=false for tests/tools.
+  HUMANIZE_ENABLED: z.preprocess((value) => booleanFromEnv(value), z.boolean()).default(true),
+  HUMANIZE_BASE_SECONDS: z.coerce.number().int().min(0).default(4),
+  HUMANIZE_EXTRA_MAX_SECONDS: z.coerce.number().int().min(0).default(10),
+  HUMANIZE_MS_PER_CHAR: z.coerce.number().int().min(0).default(40),
+  HUMANIZE_MAX_SECONDS: z.coerce.number().int().min(0).default(180),
 });
 
 type RawEnv = z.infer<typeof envSchema>;
@@ -100,6 +117,14 @@ export interface EnvConfig {
   mediaMessageThreshold: number;
   mediaTriggerMode: MediaTriggerMode;
   mediaTimeMs: number;
+  /** Human-like reply: typing indicator + proportional delay. */
+  humanize: {
+    enabled: boolean;
+    baseMs: number;
+    extraMaxMs: number;
+    msPerChar: number;
+    maxMs: number;
+  };
 }
 
 function parseIdList(raw: string): number[] {
@@ -194,6 +219,13 @@ function loadEnv(): EnvConfig {
     mediaMessageThreshold: raw.MEDIA_MESSAGE_THRESHOLD,
     mediaTriggerMode: raw.MEDIA_TRIGGER_MODE,
     mediaTimeMs: raw.MEDIA_TIME_MINUTES * 60 * 1000,
+    humanize: {
+      enabled: raw.HUMANIZE_ENABLED,
+      baseMs: raw.HUMANIZE_BASE_SECONDS * 1000,
+      extraMaxMs: raw.HUMANIZE_EXTRA_MAX_SECONDS * 1000,
+      msPerChar: raw.HUMANIZE_MS_PER_CHAR,
+      maxMs: raw.HUMANIZE_MAX_SECONDS * 1000,
+    },
   };
 }
 
