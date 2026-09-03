@@ -38,7 +38,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Long polling (local development).
+  // Long polling (local development or sleep-tolerant hosts).
   const app = createApp({ bot, webhookPath: null });
   app.listen(env.port, () => {
     logger.info({ port: env.port }, 'health server listening');
@@ -46,7 +46,9 @@ async function main(): Promise<void> {
 
   await bot.start({
     allowed_updates: env.allowedUpdates as never,
-    drop_pending_updates: true,
+    // Do NOT drop pending updates: if the instance slept and misses messages,
+    // they are processed on reconnect instead of being silently discarded.
+    drop_pending_updates: false,
   });
   logger.info('bot started in polling mode');
 }
