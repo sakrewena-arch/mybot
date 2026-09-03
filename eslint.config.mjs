@@ -11,6 +11,14 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    files: ['scripts/**/*.mjs'],
+    rules: {
+      // Plain Node.js scripts — these globals (process, URL, …) are not
+      // declared anywhere in the JS preset.
+      'no-undef': 'off',
+    },
+  },
+  {
     rules: {
       '@typescript-eslint/no-unused-vars': [
         'warn',
