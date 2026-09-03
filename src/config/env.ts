@@ -51,7 +51,7 @@ const envSchema = z.object({
   ALLOWED_UPDATES: z
     .string()
     .default(
-      'business_connection,business_message,edited_business_message,deleted_business_messages,message,pre_checkout_query,purchased_paid_media',
+      'business_connection,business_message,edited_business_message,deleted_business_messages,message,callback_query,pre_checkout_query,purchased_paid_media',
     ),
   AI_MODEL: z.string().default('gpt-4o-mini'),
   AI_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.8),

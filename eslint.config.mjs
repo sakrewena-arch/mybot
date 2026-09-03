@@ -1,4 +1,4 @@
-/**
+                    /**
  * ESLint 9 flat config.
  */
 import js from '@eslint/js';
