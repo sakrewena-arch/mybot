@@ -380,13 +380,17 @@ AI_MODEL=deepseek-chat
 # Laisser OPENAI_API_KEY/OPENAI_BASE_URL vides, utiliser AI_PROVIDERS_JSON :
 AI_PROVIDERS_JSON=[
   {"name":"deepseek","apiKey":"sk-...","baseUrl":"https://api.deepseek.com","model":"deepseek-chat","supportsJsonMode":true},
-  {"name":"groq","apiKey":"gsk_...","baseUrl":"https://api.groq.com/openai/v1","model":"llama-3.3-70b-versatile","supportsJsonMode":false},
+  {"name":"groq","apiKey":"gsk_...","baseUrl":"https://api.groq.com/openai/v1","model":"openai/gpt-oss-20b","supportsJsonMode":true},
   {"name":"gemini","apiKey":"AIza...","baseUrl":"https://generativelanguage.googleapis.com/v1beta/openai/","model":"gemini-2.0-flash","supportsJsonMode":true}
 ]
 ```
 - `supportsJsonMode:false` : le fournisseur ne gère pas `response_format
-  json_object` (cas Groq) — le bot extrait alors le JSON directement depuis le
+  json_object` — le bot extrait alors le JSON directement depuis le
   texte de la réponse (robuste aux fences markdown).
+- ⚠️ Groq : le modèle `llama-3.3-70b-versatile` est passé en **Enterprise**
+  (inaccessible sur le plan dev — erreur 404). Utiliser `openai/gpt-oss-20b`
+  (rapide, JSON OK) ou `openai/gpt-oss-120b` (qualité supérieure), ou
+  `groq/compound-mini`.
 - Ordre = priorité. Rotation round-robin entre fournisseurs sains pour répartir
   la charge.
 - Backoff appliqué : 1 min (429/529/503), 30 min (402 solde), exponentiel
