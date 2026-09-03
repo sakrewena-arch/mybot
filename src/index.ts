@@ -31,6 +31,28 @@ async function main(): Promise<void> {
     });
     logger.info({ webhookUrl: env.webhookUrl }, 'webhook registered');
 
+    // Diagnostic aid: dump what Telegram actually has registered, so a wrong
+    // WEBHOOK_URL is visible in the logs instead of silently dropping updates.
+    bot.api
+      .getWebhookInfo()
+      .then((info) =>
+        logger.info(
+          {
+            url: info.url,
+            pendingUpdateCount: info.pending_update_count,
+            lastError: info.last_error_message ?? undefined,
+            allowedUpdates: info.allowed_updates ?? undefined,
+          },
+          'webhook info',
+        ),
+      )
+      .catch((error: unknown) =>
+        logger.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'getWebhookInfo failed',
+        ),
+      );
+
     const app = createApp({ bot, webhookPath: '/telegram/webhook' });
     app.listen(env.port, () => {
       logger.info({ port: env.port }, 'webhook server listening');
