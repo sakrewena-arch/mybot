@@ -143,6 +143,10 @@ cp .env.example .env
 | `MEDIA_MESSAGE_THRESHOLD` | Message count that unlocks `message_count` offers             |
 | `MEDIA_TRIGGER_MODE`  | `none` / `message_count` / `time` / `ai` / `manual`             |
 | `MEDIA_TIME_MINUTES`  | Wait after the last proposal before a `time` offer              |
+| `HUMANIZE_ENABLED`    | `true` → typing indicator + human-like delay before replies     |
+| `HUMANIZE_BASE_SECONDS` / `HUMANIZE_EXTRA_MAX_SECONDS` | Base + random extra seconds before replying |
+| `HUMANIZE_MS_PER_CHAR` | Extra "typing time" per character of the reply                |
+| `HUMANIZE_MAX_SECONDS` | Hard cap on the total per-reply delay (default 180 s)          |
 
 All variables are validated with **Zod** at startup — the process refuses to boot
 with an invalid configuration.
@@ -387,9 +391,14 @@ AI_PROVIDERS_JSON=[
   la charge.
 - Backoff appliqué : 1 min (429/529/503), 30 min (402 solde), exponentiel
   plafonné à 10 min (erreurs réseau/5xx).
-- Si **tous** les fournisseurs sont épuisés, le bot répond un message de
-  secours poli au lieu de planter : *« Give me one second, my brain is
-  recharging 😅 »*.
+- Si **tous** les fournisseurs sont épuisés, le bot répond une excuse naturelle
+  et variée (évite toute formulation « IA / système ») pour rester crédible :
+  *« Sorry, I missed that — my connection just dropped 😅 Could you say it
+  again? »*. Le vrai motif (clé invalide, solde, quota…) reste dans les logs.
+- **Diagnostic au démarrage** : à chaque boot le bot `ping` chaque fournisseur
+  (1 token) et journalise `AI provider ok` ou `AI provider misconfigured or
+  unreachable` avec le message d'erreur — idéal pour valider clés / URLs /
+  soldes avant de tester en réel.
 
 **Statut** : les bascules et mises en pause sont journalisées (pino) avec le
 nom du fournisseur, l'erreur et le backoff appliqué.
