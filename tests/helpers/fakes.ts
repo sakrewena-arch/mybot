@@ -39,6 +39,10 @@ export function createFakeApi(): { api: ApiLike; calls: ApiCall[] } {
       calls.push({ kind: 'answerPreCheckoutQuery', args });
       return true;
     },
+    async readBusinessMessage(args) {
+      calls.push({ kind: 'readBusinessMessage', args });
+      return true;
+    },
   };
   return { api, calls };
 }

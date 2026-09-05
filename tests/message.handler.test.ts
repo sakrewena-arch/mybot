@@ -172,6 +172,7 @@ function buildDeps(overrides: Partial<BusinessMessageHandlerDeps> = {}) {
       reason: null,
       provider: 'test',
     })),
+    isAiUnavailable: vi.fn(() => false),
   };
 
   const env = {
@@ -228,6 +229,32 @@ describe('business_message handling', () => {
     expect(args['chat_id']).toBe(555);
     expect(args['text']).toBe('Hey there!');
     expect(h.deps.conversationService.recordOutbound).toHaveBeenCalled();
+  });
+
+  it('does not read or reply when the AI quota is exhausted', async () => {
+    h.responseService.isAiUnavailable = vi.fn(() => true);
+
+    await handleBusinessMessage(makeCtx('Hi there?'), h.deps);
+
+    // No read, no reply, no generation.
+    expect(h.calls.filter((c) => c.kind === 'readBusinessMessage')).toHaveLength(0);
+    expect(h.calls.filter((c) => c.kind === 'sendMessage')).toHaveLength(0);
+    expect(h.responseService.generateReply).not.toHaveBeenCalled();
+  });
+
+  it('does not send a message when the AI provider is unavailable', async () => {
+    h.responseService.generateReply.mockResolvedValue({
+      text: '',
+      shouldSendPaidMedia: false,
+      mediaId: null,
+      reason: null,
+      provider: 'none',
+    });
+
+    await handleBusinessMessage(makeCtx('Hello?'), h.deps);
+
+    expect(h.calls.filter((c) => c.kind === 'sendMessage')).toHaveLength(0);
+    expect(h.deps.conversationService.recordOutbound).not.toHaveBeenCalled();
   });
 
   it('does nothing when the connection is disabled', async () => {

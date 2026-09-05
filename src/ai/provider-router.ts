@@ -5,11 +5,10 @@ import { logger } from '../utils/logger.js';
 /**
  * Multi-provider router for OpenAI-compatible APIs.
  *
- * Each provider has its own client (base URL + key + model). When one provider
+ * The FIRST provider in the list is the PRIMARY (always tried first). When it
  * hits a quota / rate-limit / transient error, it is put on a cooldown
  * ("exhaustedUntil") and the next healthy provider answers transparently.
- * Providers are tried round-robin so load is spread evenly and quotas recharge
- * in the background.
+ * As soon as the primary quota window has passed, it is tried again.
  *
  * The conversation thread is NEVER lost during failover: the context is always
  * rebuilt from the DB history before calling any provider, so whichever
@@ -40,7 +39,7 @@ function backoffMs(error: unknown, consecutiveFailures: number): number {
       ? (error as { status?: unknown }).status
       : undefined;
 
-  if (status === 429) return 60_000; // rate limit / quota window (1 min)
+  if (status === 429) return 300_000; // quota window (5 min) — lets tokens recharge
   if (status === 402) return 30 * 60_000; // insufficient balance (needs recharge)
   if (status === 529 || status === 503) return 60_000; // overloaded
 
@@ -59,6 +58,8 @@ export interface ProviderRouter {
   ): Promise<ProviderRouterResult<T>>;
   /** Current status per provider (used for logs/debug). */
   statuses(): Array<{ name: string; ready: boolean; retryAt: string | null }>;
+  /** True when every provider is on cooldown (no quota left anywhere). */
+  isAllExhausted(): boolean;
 }
 
 export function createProviderRouter(
@@ -76,22 +77,17 @@ export function createProviderRouter(
     throw new AppError('No AI provider configured', 'NO_AI_PROVIDER');
   }
 
-  let head = 0;
-
   return {
     async executeWithFailover(fn) {
-      const attempts = providers.length;
-      for (let i = 0; i < attempts; i += 1) {
-        const index = (head + i) % providers.length;
-        const alive = providers[index]!;
+      // Always start from the first (primary) provider so OpenAI is used
+      // whenever its quota is available; the list acts as a strict priority.
+      for (const alive of providers) {
         const now = Date.now();
-
         if (alive.exhaustedUntil > now) continue; // quota not recharged yet
 
         try {
           const value = await fn(alive.client, alive.config);
           alive.consecutiveFailures = 0;
-          head = (index + 1) % providers.length; // spread next calls
           return { value, providerName: alive.config.name };
         } catch (error) {
           alive.consecutiveFailures += 1;
@@ -123,6 +119,11 @@ export function createProviderRouter(
         ready: p.exhaustedUntil <= now,
         retryAt: p.exhaustedUntil > now ? new Date(p.exhaustedUntil).toISOString() : null,
       }));
+    },
+
+    isAllExhausted() {
+      const now = Date.now();
+      return providers.every((p) => p.exhaustedUntil > now);
     },
   };
 }

@@ -155,12 +155,13 @@ describe('response service (AI generation)', () => {
     expect(result.shouldSendPaidMedia).toBe(false);
   });
 
-  it('returns a graceful fallback when the model returns an empty completion', async () => {
+  it('returns no reply when the provider errors (empty completion)', async () => {
     const { service } = makeService({ choices: [{ message: { content: '' } }] });
 
     const result = await service.generateReply(baseInput());
 
     expect(result.provider).toBe('none');
-    expect(result.text.length).toBeGreaterThan(0);
+    expect(result.text).toBe('');
+    expect(result.shouldSendPaidMedia).toBe(false);
   });
 });

@@ -16,6 +16,7 @@ import { createBusinessService } from '../services/business.service.js';
 import { createMediaService } from '../media/media.service.js';
 import { createPaidMediaService } from './payments/paid-media.js';
 import { createResponseService } from '../ai/response.service.js';
+import { createReengagementService } from '../services/reengagement.service.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../ai/prompt.service.js';
 import { registerBusinessConnectionHandler } from './business/connection.handler.js';
 import {
@@ -145,6 +146,20 @@ export function createBot(): Bot {
     businessService,
     paidMediaService,
   });
+
+  // Automated follow-ups: gently re-engage users who stop replying
+  // (first nudge after REENGAGE_FIRST_DELAY_DAYS, then REENGAGE_SUBSEQUENT_DELAY_DAYS,
+  // up to REENGAGE_MAX_MESSAGES, then give up).
+  createReengagementService({
+    env,
+    api,
+    conversationRepository,
+    conversationService,
+    settingsRepository,
+    responseService,
+    mediaService,
+    purchaseService,
+  }).start();
 
   bot.catch((error) => {
     logger.error({ error: error.message, ctx: error.ctx?.update.update_id }, 'bot error');

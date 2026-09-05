@@ -83,10 +83,19 @@ const envSchema = z.object({
   // Adds a typing indicator + a proportional delay before replying so the
   // account feels human. Disable with HUMANIZE_ENABLED=false for tests/tools.
   HUMANIZE_ENABLED: z.preprocess((value) => booleanFromEnv(value), z.boolean()).default(true),
-  HUMANIZE_BASE_SECONDS: z.coerce.number().int().min(0).default(4),
-  HUMANIZE_EXTRA_MAX_SECONDS: z.coerce.number().int().min(0).default(10),
-  HUMANIZE_MS_PER_CHAR: z.coerce.number().int().min(0).default(40),
+  HUMANIZE_READ_BASE_SECONDS: z.coerce.number().int().min(0).default(120),
+  HUMANIZE_READ_MAX_SECONDS: z.coerce.number().int().min(0).default(300),
+  HUMANIZE_BASE_SECONDS: z.coerce.number().int().min(0).default(10),
+  HUMANIZE_EXTRA_MAX_SECONDS: z.coerce.number().int().min(0).default(25),
+  HUMANIZE_MS_PER_CHAR: z.coerce.number().int().min(0).default(45),
   HUMANIZE_MAX_SECONDS: z.coerce.number().int().min(0).default(180),
+  // ── Re-engagement (follow-ups) ─────────────────────────────────────
+  // If a user does not reply, Esther nudges them again after a few days.
+  REENGAGE_ENABLED: z.preprocess((value) => booleanFromEnv(value), z.boolean()).default(true),
+  REENGAGE_FIRST_DELAY_DAYS: z.coerce.number().int().min(0).default(3),
+  REENGAGE_SUBSEQUENT_DELAY_DAYS: z.coerce.number().int().min(0).default(6),
+  REENGAGE_MAX_MESSAGES: z.coerce.number().int().min(0).default(3),
+  REENGAGE_INTERVAL_MINUTES: z.coerce.number().int().min(1).default(60),
 });
 
 type RawEnv = z.infer<typeof envSchema>;
@@ -124,6 +133,22 @@ export interface EnvConfig {
     extraMaxMs: number;
     msPerChar: number;
     maxMs: number;
+    /** Delay before the owner notices/reads the message (ms). */
+    readBaseMs: number;
+    /** Random upper bound for the read delay (ms). */
+    readMaxMs: number;
+  };
+  /** Automated follow-ups for users who stopped replying. */
+  reengage: {
+    enabled: boolean;
+    /** Wait before the FIRST follow-up after Esther's last message (ms). */
+    firstDelayMs: number;
+    /** Wait between subsequent follow-ups (ms). */
+    subsequentDelayMs: number;
+    /** Max unanswered follow-ups before giving up entirely. */
+    maxMessages: number;
+    /** How often the scheduler checks for quiet chats (ms). */
+    intervalMs: number;
   };
 }
 
@@ -141,10 +166,17 @@ function parseIdList(raw: string): number[] {
     });
 }
 
-/** Builds the ordered list of AI providers (failover sequence). */
+/**
+ * Builds the ordered list of AI providers (failover sequence).
+ *
+ * OpenAI is ALWAYS the primary provider: if `OPENAI_API_KEY` is set, it is
+ * prepended to the list (as the first provider tried). `AI_PROVIDERS_JSON`
+ * then only supplies fallbacks (e.g. Groq) used when OpenAI hits its limit.
+ */
 function parseAiProviders(raw: RawEnv): AiProviderConfig[] {
   const rawJson = (process.env.AI_PROVIDERS_JSON ?? '').trim();
 
+  const fallbacks: AiProviderConfig[] = [];
   if (rawJson.length > 0) {
     let value: unknown;
     try {
@@ -163,24 +195,33 @@ function parseAiProviders(raw: RawEnv): AiProviderConfig[] {
     if (unique.size !== parsed.data.length) {
       throw new Error('AI_PROVIDERS_JSON provider names must be unique');
     }
-    return parsed.data;
+    fallbacks.push(...parsed.data);
   }
 
-  // Legacy: single provider configured via OPENAI_* variables.
-  if (!raw.OPENAI_API_KEY) {
+  // OpenAIs always comes first when its key is present (paid subscription).
+  const providers: AiProviderConfig[] = [];
+  if (raw.OPENAI_API_KEY) {
+    const alreadyOpenAI = fallbacks.some(
+      (p) => p.name.toLowerCase() === 'openai' || p.name.toLowerCase() === 'primary',
+    );
+    if (!alreadyOpenAI) {
+      providers.push({
+        name: 'openai',
+        apiKey: raw.OPENAI_API_KEY,
+        baseUrl: raw.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
+        model: raw.AI_MODEL,
+        supportsJsonMode: true,
+      });
+    }
+  }
+  providers.push(...fallbacks);
+
+  if (providers.length === 0) {
     throw new Error(
-      'No AI provider configured: set AI_PROVIDERS_JSON (multi-provider mode) or OPENAI_API_KEY (single-provider mode).',
+      'No AI provider configured: set OPENAI_API_KEY (recommended) or AI_PROVIDERS_JSON.',
     );
   }
-  return [
-    {
-      name: 'primary',
-      apiKey: raw.OPENAI_API_KEY,
-      baseUrl: raw.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
-      model: raw.AI_MODEL,
-      supportsJsonMode: true,
-    },
-  ];
+  return providers;
 }
 
 function loadEnv(): EnvConfig {
@@ -221,10 +262,19 @@ function loadEnv(): EnvConfig {
     mediaTimeMs: raw.MEDIA_TIME_MINUTES * 60 * 1000,
     humanize: {
       enabled: raw.HUMANIZE_ENABLED,
+      readBaseMs: raw.HUMANIZE_READ_BASE_SECONDS * 1000,
+      readMaxMs: raw.HUMANIZE_READ_MAX_SECONDS * 1000,
       baseMs: raw.HUMANIZE_BASE_SECONDS * 1000,
       extraMaxMs: raw.HUMANIZE_EXTRA_MAX_SECONDS * 1000,
       msPerChar: raw.HUMANIZE_MS_PER_CHAR,
       maxMs: raw.HUMANIZE_MAX_SECONDS * 1000,
+    },
+    reengage: {
+      enabled: raw.REENGAGE_ENABLED,
+      firstDelayMs: raw.REENGAGE_FIRST_DELAY_DAYS * 24 * 60 * 60 * 1000,
+      subsequentDelayMs: raw.REENGAGE_SUBSEQUENT_DELAY_DAYS * 24 * 60 * 60 * 1000,
+      maxMessages: raw.REENGAGE_MAX_MESSAGES,
+      intervalMs: raw.REENGAGE_INTERVAL_MINUTES * 60 * 1000,
     },
   };
 }

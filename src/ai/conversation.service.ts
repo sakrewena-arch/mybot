@@ -20,6 +20,8 @@ export interface BuildConversationOptions {
   history: HistoryTurn[];
   profile: UserProfile;
   catalog: MediaCatalogEntry[];
+  /** Optional extra context appended to the system prompt (e.g. follow-up note). */
+  extraInstruction?: string;
 }
 
 /**
@@ -36,6 +38,9 @@ export function buildConversationMessages(options: BuildConversationOptions): Ch
     },
     { jsonMode: options.jsonMode },
   );
+  const finalSystem = options.extraInstruction
+    ? `${system}\n\n${options.extraInstruction}`
+    : system;
 
   const user = buildUserPrompt({
     profile: options.profile,
@@ -44,7 +49,7 @@ export function buildConversationMessages(options: BuildConversationOptions): Ch
   });
 
   return [
-    { role: 'system', content: system },
+    { role: 'system', content: finalSystem },
     { role: 'user', content: user },
   ];
 }

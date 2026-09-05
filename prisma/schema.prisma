@@ -80,6 +80,12 @@ model Conversation {
   businessConnectionId Int      @map("business_connection_id")
   chatId               String   @map("chat_id")
   lastMessageAt        DateTime @default(now()) @map("last_message_at")
+  /// When the USER last wrote (used to detect a quiet chat for re-engagement).
+  lastInboundAt        DateTime? @map("last_inbound_at")
+  /// When ESTHER last wrote (reply or follow-up).
+  lastOutboundAt       DateTime? @map("last_outbound_at")
+  /// Consecutive unanswered follow-ups sent while the user stayed quiet.
+  followUpCount        Int      @default(0) @map("follow_up_count")
   messageCount         Int      @default(0) @map("message_count")
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")

@@ -92,7 +92,7 @@ describe('AI provider failover', () => {
     expect(b.chat.completions.create).toHaveBeenCalledTimes(2);
   });
 
-  it('returns a graceful message when every provider is exhausted', async () => {
+  it('returns no reply when every provider is exhausted', async () => {
     const a = fakeClient({ throwStatus: 429 });
     const b = fakeClient({ throwStatus: 500 });
     const service = serviceWith({ a, b });
@@ -101,10 +101,11 @@ describe('AI provider failover', () => {
 
     expect(result.provider).toBe('none');
     expect(result.shouldSendPaidMedia).toBe(false);
-    expect(result.text.length).toBeGreaterThan(0);
+    // Quota exhausted → the bot stays quiet (empty text = nothing sent).
+    expect(result.text).toBe('');
   });
 
-  it('spreads load round-robin between healthy providers', async () => {
+  it('always uses the primary provider while it is healthy', async () => {
     const a = fakeClient({});
     const b = fakeClient({});
     const service = serviceWith({ a, b });
@@ -113,7 +114,8 @@ describe('AI provider failover', () => {
     const second = await service.generateReply(input);
 
     expect(first.provider).toBe('a');
-    expect(second.provider).toBe('b');
+    expect(second.provider).toBe('a');
+    expect(b.chat.completions.create).not.toHaveBeenCalled();
   });
 
   it('re-uses a provider after its quota recovers (backoff expires)', async () => {
@@ -121,15 +123,15 @@ describe('AI provider failover', () => {
     const b = fakeClient({});
     const service = serviceWith({ a, b });
 
-    await service.generateReply(input); // a → exhausted 60s, b answers
+    await service.generateReply(input); // a → exhausted 5 min, b answers
 
-    // Simulate quota recharge by waiting for the 60s backoff to elapse.
+    // Simulate quota recharge by waiting for the backoff (300s) to elapse.
     vi.useFakeTimers();
     try {
-      vi.setSystemTime(Date.now() + 61_000);
+      vi.setSystemTime(Date.now() + 301_000);
       const result = await service.generateReply(input);
-      // a is first in line again
-      expect(result.provider).toBe('b'); // b still healthy and a still tries first (fails again) → b
+      // a is primary again and fails once more → b answers
+      expect(result.provider).toBe('b');
       expect(a.chat.completions.create).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();

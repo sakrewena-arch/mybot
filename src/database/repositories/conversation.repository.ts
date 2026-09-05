@@ -1,4 +1,4 @@
-import type { PrismaClient, Conversation, Message } from '@prisma/client';
+import type { PrismaClient, Conversation, Message, User, BusinessConnection } from '@prisma/client';
 
 export type MessageDirectionName = 'IN' | 'OUT';
 
@@ -11,6 +11,12 @@ export type ConversationWithConnection = Conversation & {
     canReply: boolean;
     permissions: unknown;
   } | null;
+};
+
+/** Conversation with its user + connection, as returned for follow-up candidates. */
+export type ReEngagementCandidate = Conversation & {
+  user: User;
+  businessConnection: BusinessConnection;
 };
 
 export interface ConversationRepository {
@@ -45,6 +51,17 @@ export interface ConversationRepository {
   count(): Promise<number>;
   countActiveSince(date: Date): Promise<number>;
   listRecent(limit: number): Promise<Conversation[]>;
+  /** Marks one more unanswered follow-up sent to a conversation. */
+  incrementFollowUp(conversationId: number): Promise<void>;
+  /**
+   * Conversations where Esther has written and the user has stayed quiet,
+   * on an enabled connection that can reply. Candidates are refined in
+   * the re-engagement service (delay per follow-up count, user reply etc.).
+   */
+  listForReengagement(input: {
+    maxFollowUps: number;
+    since: Date;
+  }): Promise<ReEngagementCandidate[]>;
 }
 
 export function createConversationRepository(client: PrismaClient): ConversationRepository {
@@ -83,6 +100,9 @@ export function createConversationRepository(client: PrismaClient): Conversation
           data: {
             messageCount: { increment: 1 },
             lastMessageAt: new Date(),
+            lastInboundAt: new Date(),
+            // The user answered → the unanswered follow-up streak resets.
+            followUpCount: 0,
           },
         }),
       ]);
@@ -90,14 +110,21 @@ export function createConversationRepository(client: PrismaClient): Conversation
     },
 
     recordOutbound({ conversationId, telegramMessageId, text }) {
-      return client.message.create({
-        data: {
-          conversationId,
-          telegramMessageId: telegramMessageId ?? null,
-          direction: 'OUT',
-          text,
-          createdAt: new Date(),
-        },
+      return client.$transaction(async (tx) => {
+        const message = await tx.message.create({
+          data: {
+            conversationId,
+            telegramMessageId: telegramMessageId ?? null,
+            direction: 'OUT',
+            text,
+            createdAt: new Date(),
+          },
+        });
+        await tx.conversation.update({
+          where: { id: conversationId },
+          data: { lastOutboundAt: new Date() },
+        });
+        return message;
       });
     },
 
@@ -173,6 +200,28 @@ export function createConversationRepository(client: PrismaClient): Conversation
         orderBy: { lastMessageAt: 'desc' },
         take: limit,
         include: { user: true, businessConnection: true },
+      });
+    },
+
+    async incrementFollowUp(conversationId) {
+      await client.conversation.update({
+        where: { id: conversationId },
+        data: {
+          followUpCount: { increment: 1 },
+          lastOutboundAt: new Date(),
+        },
+      });
+    },
+
+    listForReengagement({ maxFollowUps, since }) {
+      return client.conversation.findMany({
+        where: {
+          followUpCount: { lt: maxFollowUps },
+          lastOutboundAt: { not: null, gte: since },
+          businessConnection: { isEnabled: true, canReply: true },
+        },
+        include: { user: true, businessConnection: true },
+        orderBy: { lastOutboundAt: 'asc' },
       });
     },
   };

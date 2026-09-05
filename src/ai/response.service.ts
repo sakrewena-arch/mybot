@@ -18,6 +18,8 @@ export interface GenerateReplyInput {
   catalog: MediaCatalogEntry[];
   /** true → ask the model for a structured JSON answer including a media decision. */
   mediaDecisionMode: boolean;
+  /** Optional extra context appended to the system prompt (e.g. follow-up note). */
+  extraInstruction?: string;
 }
 
 export interface AiReply {
@@ -94,6 +96,11 @@ function extractJsonObject(content: string): unknown | null {
 export interface ResponseService {
   generateReply(input: GenerateReplyInput): Promise<AiReply>;
   /**
+   * True when every AI provider is on cooldown (quota exhausted everywhere).
+   * The caller must then skip reading and replying until tokens recharge.
+   */
+  isAiUnavailable(): boolean;
+  /**
    * Cheap connectivity self-test for every configured provider.
    * Used at startup to surface bad keys / URLs / balances in the logs.
    */
@@ -132,6 +139,7 @@ export function createResponseService(deps: {
       history: input.history,
       profile: input.profile,
       catalog: input.catalog,
+      extraInstruction: input.extraInstruction,
     });
 
     const completion = await client.chat.completions.create({
@@ -191,11 +199,17 @@ export function createResponseService(deps: {
             .statuses()
             .map((s) => `${s.name}: ${s.ready ? 'ready' : 'quota'}`)
             .join(', ');
-          logger.warn({ details }, 'all AI providers exhausted');
-          return { text: pickHumanFallback(), ...NO_MEDIA_DECISION, provider: 'none' };
+          logger.warn({ details }, 'all AI providers exhausted — no reply sent');
+          // No "human fallback" on purpose: when the owner's tokens are gone,
+          // the bot must stay quiet (neither read nor answer) until recharge.
+          return { text: '', ...NO_MEDIA_DECISION, provider: 'none' };
         }
         throw error;
       }
+    },
+
+    isAiUnavailable() {
+      return router.isAllExhausted();
     },
 
     async diagnoseProviders() {

@@ -15,7 +15,7 @@ import type { UserProfile } from '../../ai/prompt.service.js';
 import { isChatAllowed } from './permissions.js';
 import { isCooldownElapsed } from '../../media/selection.js';
 import { toErrorMessage } from '../../utils/errors.js';
-import { humanReplyDelayMs, sleep } from '../../utils/human.js';
+import { humanReadDelayMs, humanReplyDelayMs, sleep } from '../../utils/human.js';
 import { logger } from '../../utils/logger.js';
 
 export interface BusinessMessageHandlerDeps {
@@ -98,6 +98,21 @@ export async function handleBusinessMessage(
     const settings = await deps.settingsRepository.getSettings();
     if (!settings.enabled) return;
 
+    // Quota gate: when every AI provider is exhausted (tokens depleted), the
+    // owner reads NOTHING and answers NOTHING until the quota recharges.
+    if (deps.responseService.isAiUnavailable()) {
+      logger.info(
+        { chatId: msg.chat.id, connectionId: msg.business_connection_id },
+        'AI quota exhausted — skipping read and reply',
+      );
+      return;
+    }
+
+    // Real people do not answer instantly: Esther takes a few minutes before
+    // she even "sees" the message. No typing indicator during this phase.
+    const noticeDelayMs = humanReadDelayMs(deps.env.humanize);
+    if (noticeDelayMs > 0) await sleep(noticeDelayMs);
+
     try {
       await deps.api.readBusinessMessage?.({
         business_connection_id: msg.business_connection_id,
@@ -133,12 +148,6 @@ export async function handleBusinessMessage(
     );
 
     const startedAt = Date.now();
-    // Show "typing…" on the business chat while the AI thinks and "writes".
-    void deps.api.sendChatAction?.({
-      business_connection_id: msg.business_connection_id,
-      chat_id: msg.chat.id,
-      action: 'typing',
-    })?.catch(() => undefined);
 
     const aiReply = await deps.responseService.generateReply({
       settings: {
@@ -151,6 +160,22 @@ export async function handleBusinessMessage(
       catalog,
       mediaDecisionMode: deps.env.mediaTriggerMode === 'ai',
     });
+
+    // No provider answered (quota exhausted at generation time): stay quiet.
+    if (aiReply.provider === 'none') {
+      logger.info(
+        { chatId: msg.chat.id, connectionId: msg.business_connection_id },
+        'no AI provider answered — nothing sent',
+      );
+      return;
+    }
+
+    // Show "typing…" on the business chat while the AI thinks and "writes".
+    void deps.api.sendChatAction?.({
+      business_connection_id: msg.business_connection_id,
+      chat_id: msg.chat.id,
+      action: 'typing',
+    })?.catch(() => undefined);
 
     // Human-like writing time: wait so the total gap between the user message
     // and the reply feels natural (longer replies take longer), and keep the
