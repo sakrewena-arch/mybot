@@ -1,6 +1,6 @@
 import {
+  buildContextPrompt,
   buildSystemPrompt,
-  buildUserPrompt,
   type HistoryTurn,
   type MediaCatalogEntry,
   type UserProfile,
@@ -16,7 +16,10 @@ export interface BuildConversationOptions {
   systemPrompt: string;
   preferLanguage: 'en' | 'user';
   defaultLanguage: string;
+  /** true → provider supports response_format=json_object and gets strict JSON rules. */
   jsonMode: boolean;
+  /** true → the model may offer a paid media (strict JSON or a [MEDIA:<id>] marker). */
+  mediaDecision: boolean;
   history: HistoryTurn[];
   profile: UserProfile;
   catalog: MediaCatalogEntry[];
@@ -25,9 +28,15 @@ export interface BuildConversationOptions {
 }
 
 /**
- * Assembles the message array sent to the model:
- * one system message (personality + rules) and one user message
- * (profile + history + catalog).
+ * Assembles the message array sent to the model as a REAL chat:
+ * 1. one system message (personality + style + rules),
+ * 2. a compact context block (user profile + catalog) as a user-like message,
+ * 3. the recent history as true user/assistant turns, oldest first.
+ *
+ * The FINAL message is therefore the user's latest message — exactly what the
+ * model has to answer. Feeding the whole conversation as one giant user
+ * message makes models sound robotic and repeat themselves; real turns keep
+ * the discussion natural.
  */
 export function buildConversationMessages(options: BuildConversationOptions): ChatMessage[] {
   const system = buildSystemPrompt(
@@ -36,20 +45,25 @@ export function buildConversationMessages(options: BuildConversationOptions): Ch
       defaultLanguage: options.defaultLanguage,
       preferLanguage: options.preferLanguage,
     },
-    { jsonMode: options.jsonMode },
+    { jsonMode: options.jsonMode, softMediaMode: options.mediaDecision && !options.jsonMode },
   );
   const finalSystem = options.extraInstruction
     ? `${system}\n\n${options.extraInstruction}`
     : system;
 
-  const user = buildUserPrompt({
+  const context = buildContextPrompt({
     profile: options.profile,
-    history: options.history,
     catalog: options.catalog,
   });
 
+  const historyTurns: ChatMessage[] = options.history.map((turn) => ({
+    role: turn.role,
+    content: turn.text,
+  }));
+
   return [
     { role: 'system', content: finalSystem },
-    { role: 'user', content: user },
+    { role: 'user', content: context },
+    ...historyTurns,
   ];
 }

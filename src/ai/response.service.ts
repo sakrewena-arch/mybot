@@ -135,7 +135,8 @@ export function createResponseService(deps: {
       systemPrompt: input.settings.systemPrompt,
       preferLanguage: input.preferLanguage,
       defaultLanguage: input.settings.defaultLanguage,
-      jsonMode: jsonMode || input.mediaDecisionMode, // still instruct the model to output JSON
+      jsonMode,
+      mediaDecision: input.mediaDecisionMode,
       history: input.history,
       profile: input.profile,
       catalog: input.catalog,
@@ -159,31 +160,56 @@ export function createResponseService(deps: {
       return { text: content, ...NO_MEDIA_DECISION };
     }
 
-    const parsed = extractJsonObject(content);
-    if (parsed === null) {
-      logger.warn({ provider: config.name, content }, 'AI returned non-JSON in json mode');
+    const clean = content.replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+
+    // Prefer a strict JSON answer (OpenAI-style json providers).
+    const parsed = extractJsonObject(clean);
+    if (parsed !== null) {
+      const result = aiReplySchema.safeParse(parsed);
+      if (result.success) {
+        return {
+          text: result.data.reply,
+          shouldSendPaidMedia: result.data.shouldSendPaidMedia === true,
+          mediaId: result.data.mediaId ?? null,
+          reason: result.data.reason ?? null,
+        };
+      }
+      // JSON object but wrong shape → keep only the textual part. Never
+      // forward a raw JSON blob (or a conversation dump) to the chat.
+      const maybeReply =
+        typeof (parsed as { reply?: unknown }).reply === 'string'
+          ? ((parsed as { reply: string }).reply).trim()
+          : '';
+      if (maybeReply.length > 0) {
+        logger.warn(
+          { provider: config.name, issues: result.error.issues },
+          'AI JSON shape mismatch — kept reply text only',
+        );
+        return { text: maybeReply.slice(0, 4000), ...NO_MEDIA_DECISION };
+      }
+    }
+
+    // Plain-text providers (Groq etc.): they were asked to optionally append a
+    // [MEDIA:<id>] marker line. Strip it from what the user sees.
+    const markerMatch = /\[MEDIA:\s*(\d+)\s*\]/.exec(clean);
+    if (markerMatch) {
+      const mediaId = Number(markerMatch[1]);
+      const text = clean
+        .replace(/\[MEDIA:\s*\d+\s*\]/g, '')
+        .replace(/\n{2,}/g, '\n')
+        .trim();
       return {
-        text:
-          content.replace(/^```(?:json)?\s*|\s*```$/g, '').trim() || pickHumanFallback(),
-        ...NO_MEDIA_DECISION,
+        text: text.length > 0 ? text : pickHumanFallback(),
+        shouldSendPaidMedia: true,
+        mediaId,
+        reason: null,
       };
     }
 
-    const result = aiReplySchema.safeParse(parsed);
-    if (!result.success) {
-      logger.warn(
-        { provider: config.name, issues: result.error.issues },
-        'AI JSON answer did not match the expected schema',
-      );
-      return { text: content, ...NO_MEDIA_DECISION };
+    if (parsed === null) {
+      logger.warn({ provider: config.name, content }, 'AI returned non-JSON in json mode');
     }
-
-    return {
-      text: result.data.reply,
-      shouldSendPaidMedia: result.data.shouldSendPaidMedia === true,
-      mediaId: result.data.mediaId ?? null,
-      reason: result.data.reason ?? null,
-    };
+    return { text: clean || pickHumanFallback(), ...NO_MEDIA_DECISION };
   }
 
   return {

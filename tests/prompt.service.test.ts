@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSystemPrompt, buildUserPrompt } from '../src/ai/prompt.service.js';
+import { buildSystemPrompt, buildContextPrompt } from '../src/ai/prompt.service.js';
 
 describe('prompt service', () => {
   it('builds a system prompt with language + media rules', () => {
@@ -31,8 +31,8 @@ describe('prompt service', () => {
     expect(prompt).toContain('"mediaId"');
   });
 
-  it('exposes profile, history, catalog and owned media to the model', () => {
-    const prompt = buildUserPrompt({
+  it('exposes profile and catalog to the model (history travels as real turns)', () => {
+    const prompt = buildContextPrompt({
       profile: {
         firstName: 'Alice',
         lastName: null,
@@ -42,10 +42,6 @@ describe('prompt service', () => {
         lastInteractionAt: new Date('2026-01-01T00:00:00Z'),
         ownedMediaIds: [3],
       },
-      history: [
-        { role: 'user', text: 'hi' },
-        { role: 'assistant', text: 'hello!' },
-      ],
       catalog: [
         {
           id: 2,
@@ -61,16 +57,15 @@ describe('prompt service', () => {
 
     expect(prompt).toContain('Alice');
     expect(prompt).toContain('username: alice');
-    expect(prompt).toContain('user: hi');
-    expect(prompt).toContain('assistant: hello!');
     expect(prompt).toContain('id=2');
     expect(prompt).toContain('price=30');
     expect(prompt).toContain('media already bought: #3');
     expect(prompt).not.toContain('id=3');
+    expect(prompt).toContain('Reply to the LAST message only');
   });
 
-  it('handles an empty catalog and history', () => {
-    const prompt = buildUserPrompt({
+  it('handles an empty catalog', () => {
+    const prompt = buildContextPrompt({
       profile: {
         firstName: null,
         lastName: null,
@@ -80,11 +75,9 @@ describe('prompt service', () => {
         lastInteractionAt: null,
         ownedMediaIds: [],
       },
-      history: [],
       catalog: [],
     });
     expect(prompt).toContain('(empty)');
-    expect(prompt).toContain('(no prior messages)');
     expect(prompt).toContain('(none)');
   });
 });

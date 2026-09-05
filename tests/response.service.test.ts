@@ -164,4 +164,92 @@ describe('response service (AI generation)', () => {
     expect(result.text).toBe('');
     expect(result.shouldSendPaidMedia).toBe(false);
   });
+
+  it('keeps reply text when the AI returns malformed JSON (never sends raw JSON)', async () => {
+    const { service } = makeService({
+      choices: [
+        {
+          message: {
+            content: '{"reply":"still text","shouldSendPaidMedia":true,"mediaId":"abc"}',
+          },
+        },
+      ],
+    });
+
+    const result = await service.generateReply(baseInput());
+
+    expect(result.text).toBe('still text');
+    expect(result.shouldSendPaidMedia).toBe(false);
+    expect(result.mediaId).toBeNull();
+  });
+
+  it('extracts a [MEDIA:<id>] marker from a plain-text provider', async () => {
+    const groq: AiProviderConfig = {
+      name: 'groq',
+      apiKey: 'test-key',
+      baseUrl: 'https://api.groq.com/openai/v1',
+      model: 'test-model',
+      supportsJsonMode: false,
+    };
+    const fakeOpenAI = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [
+              { message: { content: 'I have something for you 😉\n[MEDIA:2]' } },
+            ],
+          })),
+        },
+      },
+    } as unknown as OpenAI;
+    const service = createResponseService({
+      providers: [groq],
+      createClient: () => fakeOpenAI,
+      temperature: 0.8,
+      maxTokens: 400,
+    });
+
+    const result = await service.generateReply(baseInput());
+
+    expect(result.text).toBe('I have something for you 😉');
+    expect(result.shouldSendPaidMedia).toBe(true);
+    expect(result.mediaId).toBe(2);
+    expect(result.provider).toBe('groq');
+  });
+
+  it('sends the history as real user/assistant chat turns', async () => {
+    let capturedMessages: unknown;
+    const fakeOpenAI = {
+      chat: {
+        completions: {
+          create: vi.fn(async (opts: { messages: unknown[] }) => {
+            capturedMessages = opts.messages;
+            return { choices: [{ message: { content: '{"reply":"ok"}' } }] };
+          }),
+        },
+      },
+    } as unknown as OpenAI;
+    const service = createResponseService({
+      providers: [providerConfig],
+      createClient: () => fakeOpenAI,
+      temperature: 0.8,
+      maxTokens: 400,
+    });
+
+    await service.generateReply(
+      baseInput({
+        history: [
+          { role: 'user', text: 'hi' },
+          { role: 'assistant', text: 'hello 😊' },
+        ],
+      }),
+    );
+
+    const messages = capturedMessages as Array<{ role: string; content: string }>;
+    expect(messages[0].role).toBe('system');
+    expect(messages[1].role).toBe('user');
+    expect(messages[1].content).toContain('## User profile');
+    expect(messages[2]).toEqual({ role: 'user', content: 'hi' });
+    expect(messages[3]).toEqual({ role: 'assistant', content: 'hello 😊' });
+  });
 });

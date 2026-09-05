@@ -397,4 +397,36 @@ describe('business_message handling', () => {
 
     expect(d.calls.find((c) => c.kind === 'sendPaidMedia')).toBeDefined();
   });
+
+  it('coalesces a burst of messages into a single reply', async () => {
+    let resolveReply!: (value: AiReply) => void;
+    h.responseService.generateReply.mockImplementation(
+      () =>
+        new Promise<AiReply>((resolve) => {
+          resolveReply = resolve;
+        }),
+    );
+
+    // First message acquires the chat lock and blocks on the AI call.
+    const first = handleBusinessMessage(makeCtx('first'), h.deps);
+    await Promise.resolve();
+
+    // Second message arrives while the first cycle is still pending → it must
+    // be stored/read but MUST NOT trigger its own reply.
+    await handleBusinessMessage(makeCtx('second', { message_id: 43 }), h.deps);
+
+    resolveReply({
+      text: 'Hey you 😊',
+      shouldSendPaidMedia: false,
+      mediaId: null,
+      reason: null,
+      provider: 'test',
+    });
+    await first;
+
+    expect(h.calls.filter((c) => c.kind === 'sendMessage')).toHaveLength(1);
+    expect(h.deps.conversationService.recordOutbound).toHaveBeenCalledTimes(1);
+    expect(h.deps.conversationService.recordInbound).toHaveBeenCalledTimes(2);
+    expect(h.calls.filter((c) => c.kind === 'readBusinessMessage')).toHaveLength(2);
+  });
 });

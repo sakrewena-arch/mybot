@@ -401,13 +401,21 @@ AI_PROVIDERS_JSON=[
   json_object` — le bot extrait alors le JSON directement depuis le
   texte de la réponse (robuste aux fences markdown).
 - ⚠️ Groq : le modèle `llama-3.3-70b-versatile` est passé en **Enterprise**
-  (inaccessible sur le plan dev — erreur 404). Utiliser `openai/gpt-oss-20b`
-  (rapide, JSON OK) ou `openai/gpt-oss-120b` (qualité supérieure), ou
-  `groq/compound-mini`.
+  (inaccessible sur le plan dev — erreur 404). Utiliser `openai/gpt-oss-120b`
+  (qualité supérieure) ou `openai/gpt-oss-20b` (rapide mais **faible : réponses
+  longues, répétitives et « robotiques »** — à éviter en secours quand OpenAI
+  est saturé), ou `groq/compound-mini`.
 - **Ordre = priorité.** Le premier fournisseur de la liste (OpenAI) est toujours
   essayé en premier et **reste prioritaire** dès que son quota est rechargé.
 - Backoff appliqué : 5 min (429 quota), 30 min (402 solde), 1 min (529/503),
   exponentiel plafonné à 10 min (erreurs réseau/5xx).
+- **Réponses naturelles** : l'IA reçoit l'historique en **vrais tours de chat**
+  (user/assistant) et une consigne stricte « réponds uniquement au dernier
+  message, en 1-3 phrases courtes, ne te répète jamais » (`AI_MAX_TOKENS=300`).
+- **Anti-spam / rafales** : si l'utilisateur envoie plusieurs messages pendant
+  qu'Esther « n'a pas encore vu » le premier, ils sont marqués comme lus et le
+  bot **ne répond qu'une seule fois** (une réponse par rafale, jamais de
+  doublons identiques).
 - Si **tous** les fournisseurs sont épuisés : le bot **ne lit plus les messages
   et ne répond plus** jusqu'au rechargement des tokens (comportement voulu pour
   rester discret et crédible). Le motif réel reste dans les logs.

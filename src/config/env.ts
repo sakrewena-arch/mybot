@@ -64,7 +64,7 @@ const envSchema = z.object({
     ),
   AI_MODEL: z.string().default('gpt-4o-mini'),
   AI_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.8),
-  AI_MAX_TOKENS: z.coerce.number().int().positive().default(400),
+  AI_MAX_TOKENS: z.coerce.number().int().positive().default(300),
   HISTORY_LIMIT: z.coerce.number().int().positive().default(20),
   DEFAULT_LANGUAGE: z.string().default('en'),
   PREFER_LANGUAGE: z.enum(['en', 'user']).default('en'),

@@ -162,7 +162,13 @@ export function createBot(): Bot {
   }).start();
 
   bot.catch((error) => {
-    logger.error({ error: error.message, ctx: error.ctx?.update.update_id }, 'bot error');
+    logger.error(
+      {
+        error: toErrorMessage(error.error ?? error),
+        ctx: error.ctx?.update.update_id,
+      },
+      'bot error',
+    );
   });
 
   // Non-blocking startup self-test of the AI providers (bad key / URL /

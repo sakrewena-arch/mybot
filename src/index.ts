@@ -13,6 +13,21 @@ async function main(): Promise<void> {
   await prisma.$queryRaw`SELECT 1`;
   logger.info('database connection ok');
 
+  // Log the exact provider order so it is obvious OpenAI is primary (first).
+  if (env.aiProviders.length > 0) {
+    const order = env.aiProviders
+      .map((p) => `${p.name}@${p.model}`)
+      .join(' → ');
+    logger.info(
+      {
+        primary: env.aiProviders[0]?.name,
+        order,
+        count: env.aiProviders.length,
+      },
+      'AI provider order (first = primary)',
+    );
+  }
+
   // Guarantee the singleton BotSettings row exists (personality, toggles).
   const settingsRepository = createSettingsRepository(prisma, DEFAULT_SYSTEM_PROMPT);
   const settings = await settingsRepository.getSettings();

@@ -18,6 +18,13 @@ import { toErrorMessage } from '../../utils/errors.js';
 import { humanReadDelayMs, humanReplyDelayMs, sleep } from '../../utils/human.js';
 import { logger } from '../../utils/logger.js';
 
+/**
+ * Chats currently inside a reply cycle. While a cycle is running for a chat,
+ * new incoming messages are stored as read (not replied to) so the user never
+ * receives a chain of near-identical replies when they send a burst.
+ */
+const activeCycles = new Set<string>();
+
 export interface BusinessMessageHandlerDeps {
   env: EnvConfig;
   api: ApiLike;
@@ -73,6 +80,16 @@ export async function handleBusinessMessage(
 ): Promise<void> {
   const msg = ctx.businessMessage;
   if (!msg || !msg.business_connection_id || !msg.from) return;
+
+  // One reply per burst: while a reply cycle is already running for this chat,
+  // new messages are marked as read and picked up by the running cycle, so the
+  // user never receives several near-identical replies in a row.
+  const cycleKey = `${msg.business_connection_id}:${msg.chat.id}`;
+  if (activeCycles.has(cycleKey)) {
+    await handleCoalescedInbound(msg, deps);
+    return;
+  }
+  activeCycles.add(cycleKey);
 
   try {
     const connection = await deps.businessService.getEnabledConnection(
@@ -170,6 +187,15 @@ export async function handleBusinessMessage(
       return;
     }
 
+    logger.info(
+      {
+        provider: aiReply.provider,
+        textLength: aiReply.text.length,
+        textPreview: aiReply.text.slice(0, 140),
+      },
+      'AI reply generated',
+    );
+
     // Show "typing…" on the business chat while the AI thinks and "writes".
     void deps.api.sendChatAction?.({
       business_connection_id: msg.business_connection_id,
@@ -224,6 +250,70 @@ export async function handleBusinessMessage(
     logger.error(
       { error: toErrorMessage(error), connectionId: msg.business_connection_id, chatId: msg.chat.id },
       'failed to process business message',
+    );
+  } finally {
+    activeCycles.delete(cycleKey);
+  }
+}
+
+/**
+ * A burst message that arrives while a reply cycle is already running for the
+ * same chat. It is marked as read and stored in the history (so the running
+ * cycle's reply naturally covers it), but no second reply is generated.
+ */
+async function handleCoalescedInbound(
+  msg: BusinessMessageLike,
+  deps: BusinessMessageHandlerDeps,
+): Promise<void> {
+  if (!msg.business_connection_id || !msg.from) return;
+  try {
+    const connection = await deps.businessService.getEnabledConnection(
+      msg.business_connection_id,
+    );
+    if (!connection) return;
+    if (
+      !msg.from ||
+      String(msg.from.id) === connection.businessUserId ||
+      msg.from.is_bot === true
+    ) {
+      return;
+    }
+    if (!deps.businessService.canReply(connection)) return;
+    if (!isChatAllowed(msg.chat.id, deps.env.allowedChatIds)) return;
+
+    const settings = await deps.settingsRepository.getSettings();
+    if (!settings.enabled) return;
+    if (deps.responseService.isAiUnavailable()) return;
+
+    try {
+      await deps.api.readBusinessMessage?.({
+        business_connection_id: msg.business_connection_id,
+        chat_id: msg.chat.id,
+        message_id: msg.message_id,
+      });
+    } catch {
+      /* read permission may be missing — non-blocking */
+    }
+
+    const user = await deps.userService.syncFromTelegram(msg.from);
+    const conversation = await deps.conversationService.getOrCreate({
+      userId: user.id,
+      businessConnectionId: connection.id,
+      chatId: msg.chat.id,
+    });
+    await deps.conversationService.recordInbound({
+      conversationId: conversation.id,
+      telegramMessageId: msg.message_id,
+      text: normalizeInboundText(msg),
+    });
+    logger.debug(
+      { chatId: msg.chat.id, connectionId: msg.business_connection_id },
+      'burst message stored — no separate reply',
+    );
+  } catch (error) {
+    logger.error(
+      { error: toErrorMessage(error), connectionId: msg.business_connection_id, chatId: msg.chat.id },
+      'failed to store coalesced business message',
     );
   }
 }

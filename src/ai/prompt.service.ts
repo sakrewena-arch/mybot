@@ -8,7 +8,9 @@ Who you are:
 - You write the way you really text: short, natural sentences, lowercase sometimes, "haha", "lol", "omg", and emojis used moderately (😊😘💕😜✨). Never long robotic paragraphs.
 - Call the user by their first name when you know it (it is in your profile). Use cute pet names like "bb", "baby", "handsome" or "lovely" when the conversation feels close.
 - Keep the romance flowing: tease a little, make him feel chosen, keep the conversation ending on a note that makes him want to come back.
-- Never repeat the same sentence across messages. Never open every reply with the same greeting.
+- ALWAYS reply ONLY to the user's very latest message — never narrate the whole conversation back, never repeat what was already said.
+- Keep EVERY reply short: 1-3 short sentences, like a real quick text message — unless the user clearly asks for a longer answer.
+- Never send the same reply twice. Never open with the same greeting every time.
 - The user's first name and username are in your profile — use the first name naturally.`;
 
 /**
@@ -75,7 +77,7 @@ export interface BuildSettingsPromptInput {
 
 export function buildSystemPrompt(
   settings: BuildSettingsPromptInput,
-  opts: { jsonMode: boolean },
+  opts: { jsonMode: boolean; softMediaMode?: boolean },
 ): string {
   const languageInstruction =
     settings.preferLanguage === 'user'
@@ -96,13 +98,28 @@ export function buildSystemPrompt(
 
 Return STRICT JSON with exactly this shape:
 {"reply": "<your conversational answer, plain text>", "shouldSendPaidMedia": true|false, "mediaId": <number|null>, "reason": "<short reason or empty string>"}
-- "reply" is what you send to the chat.
+- "reply" is what you send to the chat and should read like a quick text message (1-3 short sentences).
 - If you propose media, "shouldSendPaidMedia" must be true and "mediaId" MUST be an id from the catalog.
 - If you do not propose media, set "shouldSendPaidMedia": false and "mediaId": null.
 - No text outside the JSON object.`
-    : '';
+    : opts.softMediaMode
+      ? `
 
-  return [settings.systemPrompt, languageInstruction, mediaRules, jsonInstruction]
+If you want to offer a paid media from the catalog, end your reply with a NEW LINE containing only [MEDIA:<id>] (use a real catalog id). Otherwise just reply normally and add nothing.`
+      : '';
+
+  const styleRules = `Reply style (ALWAYS):
+- Respond ONLY to the user's latest message. Never talk about the whole conversation.
+- Keep every reply SHORT (1-3 short sentences), like a quick real text message.
+- Never repeat the same reply twice. Never greet the same way every time.`;
+
+  return [
+    settings.systemPrompt,
+    languageInstruction,
+    styleRules,
+    mediaRules,
+    jsonInstruction,
+  ]
     .filter((part) => part.length > 0)
     .join('\n');
 }
@@ -111,12 +128,11 @@ function formatDate(date: Date | null): string {
   return date ? date.toISOString() : 'n/a';
 }
 
-export function buildUserPrompt(input: {
+export function buildContextPrompt(input: {
   profile: UserProfile;
-  history: HistoryTurn[];
   catalog: MediaCatalogEntry[];
 }): string {
-  const { profile, history, catalog } = input;
+  const { profile, catalog } = input;
 
   const catalogText =
     catalog.length === 0
@@ -127,11 +143,6 @@ export function buildUserPrompt(input: {
               `- id=${m.id} title="${m.title}" type=${m.type.toLowerCase()} price=${m.priceStars} stars description="${m.description ?? ''}"`,
           )
           .join('\n');
-
-  const historyText =
-    history.length === 0
-      ? '(no prior messages)'
-      : history.map((turn) => `${turn.role}: ${turn.text}`).join('\n');
 
   const ownedText =
     profile.ownedMediaIds.length === 0
@@ -147,10 +158,9 @@ export function buildUserPrompt(input: {
     `- last interaction: ${formatDate(profile.lastInteractionAt)}`,
     `- media already bought: ${ownedText}`,
     ``,
-    `## Recent conversation (oldest first)`,
-    historyText,
-    ``,
     `## Media catalog (the ONLY media that exist)`,
     catalogText,
+    ``,
+    `## Conversation history is below as real chat messages (user / assistant). Reply to the LAST message only.`,
   ].join('\n');
 }
