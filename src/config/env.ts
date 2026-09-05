@@ -76,9 +76,12 @@ const envSchema = z.object({
       message: 'OPENAI_BASE_URL must be a valid URL when provided',
     }),
   MEDIA_COOLDOWN_MINUTES: z.coerce.number().int().min(0).default(30),
-  MEDIA_MESSAGE_THRESHOLD: z.coerce.number().int().min(0).default(10),
+  MEDIA_MESSAGE_THRESHOLD: z.coerce.number().int().min(0).default(3),
   MEDIA_TRIGGER_MODE: z.enum(['none', 'message_count', 'time', 'ai', 'manual']).default('ai'),
   MEDIA_TIME_MINUTES: z.coerce.number().int().min(0).default(240),
+  // When the user asks for a photo of Esther (English/French), propose a paid
+  // media immediately — in addition to the message-count threshold.
+  MEDIA_PHOTO_REQUEST_ENABLED: z.preprocess((value) => booleanFromEnv(value), z.boolean()).default(true),
   // ── Human-like behaviour ────────────────────────────────────────────
   // Adds a typing indicator + a proportional delay before replying so the
   // account feels human. Disable with HUMANIZE_ENABLED=false for tests/tools.
@@ -126,6 +129,8 @@ export interface EnvConfig {
   mediaMessageThreshold: number;
   mediaTriggerMode: MediaTriggerMode;
   mediaTimeMs: number;
+  /** Propose a paid media right away when the user asks for a photo of Esther. */
+  mediaPhotoRequestEnabled: boolean;
   /** Human-like reply: typing indicator + proportional delay. */
   humanize: {
     enabled: boolean;
@@ -260,6 +265,7 @@ function loadEnv(): EnvConfig {
     mediaMessageThreshold: raw.MEDIA_MESSAGE_THRESHOLD,
     mediaTriggerMode: raw.MEDIA_TRIGGER_MODE,
     mediaTimeMs: raw.MEDIA_TIME_MINUTES * 60 * 1000,
+    mediaPhotoRequestEnabled: raw.MEDIA_PHOTO_REQUEST_ENABLED,
     humanize: {
       enabled: raw.HUMANIZE_ENABLED,
       readBaseMs: raw.HUMANIZE_READ_BASE_SECONDS * 1000,

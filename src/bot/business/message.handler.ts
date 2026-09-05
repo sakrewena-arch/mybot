@@ -13,7 +13,8 @@ import type { SettingsRepository } from '../../database/repositories/settings.re
 import type { ResponseService } from '../../ai/response.service.js';
 import type { UserProfile } from '../../ai/prompt.service.js';
 import { isChatAllowed } from './permissions.js';
-import { isCooldownElapsed } from '../../media/selection.js';
+import { isCooldownElapsed, detectPhotoRequest } from '../../media/selection.js';
+import { neutralizeMediaPromise } from '../../media/media-text.js';
 import { toErrorMessage } from '../../utils/errors.js';
 import { humanReadDelayMs, humanReplyDelayMs, sleep } from '../../utils/human.js';
 import { logger } from '../../utils/logger.js';
@@ -196,6 +197,34 @@ export async function handleBusinessMessage(
       'AI reply generated',
     );
 
+    // Send the paid media BEFORE the text so Esther never writes "je t'envoie
+    // la vidéo" while nothing is actually delivered. When the media send is
+    // skipped or fails, the reply text is neutralized (any promise removed).
+    const mediaOutcome = await maybeProposePaidMedia({
+      deps,
+      user,
+      conversation,
+      messageCount,
+      aiReply,
+      businessConnectionId: msg.business_connection_id,
+      chatId: msg.chat.id,
+      userText: msg.text ?? '',
+    });
+    const originalText = aiReply.text;
+    const finalText = mediaOutcome.sent
+      ? originalText
+      : neutralizeMediaPromise(originalText);
+    if (finalText !== originalText) {
+      logger.info(
+        {
+          sent: mediaOutcome.sent,
+          original: originalText.slice(0, 160),
+          final: finalText.slice(0, 160),
+        },
+        'media promise removed from reply (media not sent)',
+      );
+    }
+
     // Show "typing…" on the business chat while the AI thinks and "writes".
     void deps.api.sendChatAction?.({
       business_connection_id: msg.business_connection_id,
@@ -207,7 +236,7 @@ export async function handleBusinessMessage(
     // and the reply feels natural (longer replies take longer), and keep the
     // typing indicator alive while we wait.
     const elapsedMs = Date.now() - startedAt;
-    const targetDelayMs = humanReplyDelayMs(aiReply.text.length, deps.env.humanize);
+    const targetDelayMs = humanReplyDelayMs(finalText.length, deps.env.humanize);
     if (targetDelayMs > elapsedMs) {
       const waitMs = targetDelayMs - elapsedMs;
       const typingLoop = setInterval(() => {
@@ -227,24 +256,14 @@ export async function handleBusinessMessage(
     const sent = await deps.api.sendMessage({
       business_connection_id: msg.business_connection_id,
       chat_id: msg.chat.id,
-      text: aiReply.text,
+      text: finalText,
       protect_content: false,
     });
 
     await deps.conversationService.recordOutbound({
       conversationId: conversation.id,
       telegramMessageId: sent.message_id,
-      text: aiReply.text,
-    });
-
-    await maybeProposePaidMedia({
-      deps,
-      user,
-      conversation,
-      messageCount,
-      aiReply,
-      businessConnectionId: msg.business_connection_id,
-      chatId: msg.chat.id,
+      text: finalText,
     });
   } catch (error) {
     logger.error(
@@ -333,9 +352,19 @@ async function maybeProposePaidMedia(input: {
   aiReply: AiReplyLike;
   businessConnectionId: string;
   chatId: number;
-}): Promise<void> {
-  const { deps, user, conversation, messageCount, aiReply, businessConnectionId, chatId } =
-    input;
+  /** The text of the inbound message that triggered this cycle. */
+  userText: string;
+}): Promise<{ sent: boolean }> {
+  const {
+    deps,
+    user,
+    conversation,
+    messageCount,
+    aiReply,
+    businessConnectionId,
+    chatId,
+    userText,
+  } = input;
   const now = new Date();
 
   const lastProposal = await deps.proposalRepository.lastForUser(user.id);
@@ -359,34 +388,59 @@ async function maybeProposePaidMedia(input: {
         reason: 'cooldown active',
       });
     }
-    return;
+    return { sent: false };
   }
 
   const mode = deps.env.mediaTriggerMode;
+  // Deterministic triggers (photo request, message threshold) only apply in
+  // "automatic" modes; `manual`/`none` keep full control to the owner.
+  const activeMode = mode !== 'none' && mode !== 'manual';
   let proposed: ActiveMediaLike | null = null;
   let decisionReason: string | null = null;
 
-  if (mode === 'message_count') {
-    if (messageCount >= deps.env.mediaMessageThreshold) {
-      proposed = await deps.mediaService.selectForUser({
-        userId: user.id,
-        mode: 'message_count',
-        messageCount,
-      });
-    }
-  } else if (mode === 'time') {
-    if (lastProposal === null || elapsedSinceLast >= deps.env.mediaTimeMs) {
-      proposed = await deps.mediaService.selectForUser({ userId: user.id, mode: 'time' });
-    }
-  } else if (mode === 'ai') {
-    if (aiReply.shouldSendPaidMedia === true && aiReply.mediaId !== null) {
-      decisionReason = aiReply.reason;
-      proposed = await deps.mediaService.selectForUser({
-        userId: user.id,
-        mode: 'ai',
-        suggestedMediaId: aiReply.mediaId,
-      });
-    }
+  // 1) Explicit AI suggestion (mode=ai) — the model flagged paid media.
+  if (mode === 'ai' && aiReply.shouldSendPaidMedia === true && aiReply.mediaId !== null) {
+    decisionReason = aiReply.reason;
+    proposed = await deps.mediaService.selectForUser({
+      userId: user.id,
+      mode: 'ai',
+      suggestedMediaId: aiReply.mediaId,
+    });
+  }
+
+  // 2) The user explicitly asks for a photo of Esther → propose right away.
+  const photoRequested =
+    activeMode &&
+    deps.env.mediaPhotoRequestEnabled &&
+    detectPhotoRequest(userText);
+  if (!proposed && photoRequested) {
+    decisionReason = 'user asked for a photo';
+    proposed = await deps.mediaService.selectForUser({
+      userId: user.id,
+      mode: 'photo_request',
+    });
+  }
+
+  // 3) After N inbound messages (default 3) → propose in any automatic mode.
+  if (
+    !proposed &&
+    activeMode &&
+    messageCount >= deps.env.mediaMessageThreshold
+  ) {
+    decisionReason = decisionReason ?? `after ${messageCount} messages`;
+    proposed = await deps.mediaService.selectForUser({
+      userId: user.id,
+      mode: 'auto',
+    });
+  }
+
+  // 4) Legacy `time` behavior.
+  if (
+    !proposed &&
+    mode === 'time' &&
+    (lastProposal === null || elapsedSinceLast >= deps.env.mediaTimeMs)
+  ) {
+    proposed = await deps.mediaService.selectForUser({ userId: user.id, mode: 'time' });
   }
 
   if (!proposed) {
@@ -399,7 +453,7 @@ async function maybeProposePaidMedia(input: {
         reason: decisionReason ?? 'suggested media unavailable or already owned',
       });
     }
-    return;
+    return { sent: false };
   }
 
   try {
@@ -416,6 +470,7 @@ async function maybeProposePaidMedia(input: {
       status: 'SENT',
       reason: decisionReason,
     });
+    return { sent: true };
   } catch (error) {
     logger.error({ error: toErrorMessage(error), mediaId: proposed.id }, 'paid media send failed');
     await deps.proposalRepository.create({
@@ -425,6 +480,7 @@ async function maybeProposePaidMedia(input: {
       status: 'FAILED',
       reason: toErrorMessage(error),
     });
+    return { sent: false };
   }
 }
 

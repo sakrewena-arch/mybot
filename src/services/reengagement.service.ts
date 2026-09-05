@@ -13,6 +13,7 @@ import type { PurchaseService } from './purchase.service.js';
 import type { UserProfile } from '../ai/prompt.service.js';
 import { sleep } from '../utils/human.js';
 import { logger } from '../utils/logger.js';
+import { neutralizeMediaPromise } from '../media/media-text.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -164,17 +165,20 @@ export function createReengagementService(deps: ReengagementDeps): ReengagementS
           // A small human-like pause between nudges.
           await doSleep(2_000 + Math.floor(Math.random() * 6_000));
 
+          // Follow-ups never deliver media → neutralize any promise the model
+          // made ("je t'envoie", "here it is"…) so Esther never lies.
+          const finalText = neutralizeMediaPromise(aiReply.text);
           const sentMessage = await deps.api.sendMessage({
             business_connection_id: candidate.businessConnection.businessConnectionId,
             chat_id: candidate.chatId,
-            text: aiReply.text,
+            text: finalText,
             protect_content: false,
           });
 
           await deps.conversationRepository.recordOutbound({
             conversationId: candidate.id,
             telegramMessageId: sentMessage.message_id,
-            text: aiReply.text,
+            text: finalText,
           });
           await deps.conversationRepository.incrementFollowUp(candidate.id);
 

@@ -140,9 +140,10 @@ cp .env.example .env
 | `DEFAULT_LANGUAGE`    | `en` — fallback language                                        |
 | `PREFER_LANGUAGE`     | `en` (always English) or `user` (guess from the user profile)   |
 | `MEDIA_COOLDOWN_MINUTES` | Minimum space between two paid offers for the same user       |
-| `MEDIA_MESSAGE_THRESHOLD` | Message count that unlocks `message_count` offers             |
+| `MEDIA_MESSAGE_THRESHOLD` | Message count that unlocks an offer (`default 3`)            |
 | `MEDIA_TRIGGER_MODE`  | `none` / `message_count` / `time` / `ai` / `manual`             |
 | `MEDIA_TIME_MINUTES`  | Wait after the last proposal before a `time` offer              |
+| `MEDIA_PHOTO_REQUEST_ENABLED` | `true` → paid offer as soon as the user asks for a photo  |
 | `HUMANIZE_ENABLED`    | `true` → human-like delays before reading and replying        |
 | `HUMANIZE_READ_BASE_SECONDS` / `HUMANIZE_READ_MAX_SECONDS` | Delay (2-5 min) before Esther "notices" / reads a message |
 | `HUMANIZE_BASE_SECONDS` / `HUMANIZE_EXTRA_MAX_SECONDS` | Base + random extra seconds before writing the reply |
@@ -359,6 +360,14 @@ Every request to `POST /telegram/webhook` verifies the
 | `time`          | after `MEDIA_TIME_MINUTES` since the last offer                 |
 | `ai`            | the model returns a JSON media decision (id from the catalog only) |
 | `manual`        | offers only sent through the admin flow (`/propose <mediaId> <userId>`) |
+
+Two **deterministic triggers** work on top of any automatic mode (`ai`,
+`message_count`, `time`), as long as the mode is not `none`/`manual`:
+- **After N messages** → `MEDIA_MESSAGE_THRESHOLD=3` (3 inbound messages).
+- **Photo request** → `MEDIA_PHOTO_REQUEST_ENABLED=true` detects (French/English)
+  when the user asks for a photo of Esther ("envoie une photo de toi", "send me
+  a pic", "ta photo", "show me your pics"…) and proposes a paid media right away
+  (prefers a PHOTO from the catalog).
 
 Every mode is gated by `MEDIA_COOLDOWN_MINUTES` (default 30).
 

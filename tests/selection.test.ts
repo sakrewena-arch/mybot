@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { selectMediaToPropose, isCooldownElapsed } from '../src/media/selection.js';
+import {
+  selectMediaToPropose,
+  isCooldownElapsed,
+  detectPhotoRequest,
+} from '../src/media/selection.js';
 import type { ActiveMedia } from '../src/media/selection.js';
 
 const catalog: ActiveMedia[] = [
@@ -74,6 +78,58 @@ describe('selectMediaToPropose', () => {
 
   it('returns null on an empty catalog', () => {
     expect(selectMediaToPropose({ catalog: [], ownedIds: new Set(), mode: 'ai', suggestedMediaId: 1 })).toBeNull();
+  });
+
+  it('auto mode picks any eligible media', () => {
+    const result = selectMediaToPropose({ catalog, ownedIds: new Set(), mode: 'auto' });
+    expect(result?.id).toBe(1);
+  });
+
+  it('auto mode never picks a media with trigger NONE', () => {
+    const withNone: ActiveMedia[] = [
+      { id: 9, title: 'manual-only', description: null, type: 'PHOTO', priceStars: 5, triggerType: 'NONE', triggerValue: null },
+      ...catalog,
+    ];
+    const result = selectMediaToPropose({ catalog: withNone, ownedIds: new Set(), mode: 'auto' });
+    expect(result?.id).not.toBe(9);
+    expect(result?.id).toBe(1);
+  });
+
+  it('photo_request mode prefers a PHOTO', () => {
+    const videosOnly: ActiveMedia[] = [catalog[1]!];
+    const mixed = selectMediaToPropose({ catalog, ownedIds: new Set(), mode: 'photo_request' });
+    expect(mixed?.type).toBe('PHOTO');
+    const fallback = selectMediaToPropose({ catalog: videosOnly, ownedIds: new Set(), mode: 'photo_request' });
+    expect(fallback?.type).toBe('VIDEO');
+  });
+});
+
+describe('detectPhotoRequest', () => {
+  it('detects French photo requests', () => {
+    expect(detectPhotoRequest('envoie une photo de toi')).toBe(true);
+    expect(detectPhotoRequest('tu peux m\'envoyer des photos ?')).toBe(true);
+    expect(detectPhotoRequest('montre moi tes photos')).toBe(true);
+    expect(detectPhotoRequest('je veux voir des photos de toi')).toBe(true);
+    expect(detectPhotoRequest('ta photo stp')).toBe(true);
+    expect(detectPhotoRequest('donne-moi une photo')).toBe(true);
+    expect(detectPhotoRequest('nudes')).toBe(true);
+  });
+
+  it('detects English photo requests', () => {
+    expect(detectPhotoRequest('send me a pic')).toBe(true);
+    expect(detectPhotoRequest('can you send me a photo?')).toBe(true);
+    expect(detectPhotoRequest('show me your pictures')).toBe(true);
+    expect(detectPhotoRequest('i want to see you')).toBe(true);
+    expect(detectPhotoRequest('ur pics please')).toBe(true);
+    expect(detectPhotoRequest('give me nudes')).toBe(true);
+  });
+
+  it('ignores casual chat that only mentions a photo', () => {
+    expect(detectPhotoRequest('hey how are you')).toBe(false);
+    expect(detectPhotoRequest('je t\'envoie une photo de mon chien')).toBe(false);
+    expect(detectPhotoRequest('regarde, j\'ai une photo ici')).toBe(false);
+    expect(detectPhotoRequest('')).toBe(false);
+    expect(detectPhotoRequest('   ')).toBe(false);
   });
 });
 

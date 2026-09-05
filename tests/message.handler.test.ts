@@ -16,6 +16,7 @@ import {
   type BusinessMessageHandlerDeps,
   type BusinessMessageLike,
 } from '../src/bot/business/message.handler.js';
+import { containsMediaPromise } from '../src/media/media-text.js';
 import { createFakeApi, makeBusinessConnection, makeUser } from './helpers/fakes.js';
 
 type SelectForUser = (input: {
@@ -183,6 +184,7 @@ function buildDeps(overrides: Partial<BusinessMessageHandlerDeps> = {}) {
     mediaCooldownMs: 30 * 60 * 1000,
     mediaTimeMs: 240 * 60 * 1000,
     mediaMessageThreshold: 10,
+    mediaPhotoRequestEnabled: true,
     humanize: { enabled: false, baseMs: 0, extraMaxMs: 0, msPerChar: 0, maxMs: 0 },
   };
 
@@ -428,5 +430,144 @@ describe('business_message handling', () => {
     expect(h.deps.conversationService.recordOutbound).toHaveBeenCalledTimes(1);
     expect(h.deps.conversationService.recordInbound).toHaveBeenCalledTimes(2);
     expect(h.calls.filter((c) => c.kind === 'readBusinessMessage')).toHaveLength(2);
+  });
+
+  it('never sends a text that promises media which was not delivered', async () => {
+    // The AI asks to send media with an invalid id → skipped → nothing sent.
+    h.mediaService.selectForUser.mockResolvedValue(null);
+    h.responseService.generateReply.mockResolvedValue({
+      text: "je t'envoie la vidéo 😉",
+      shouldSendPaidMedia: true,
+      mediaId: 999,
+      reason: 'user asked',
+      provider: 'test',
+    });
+
+    await handleBusinessMessage(makeCtx('envoie-la'), h.deps);
+
+    expect(h.calls.filter((c) => c.kind === 'sendPaidMedia')).toHaveLength(0);
+    const send = h.calls.find((c) => c.kind === 'sendMessage');
+    expect(send).toBeDefined();
+    const text = (send?.args as Record<string, unknown>)['text'] as string;
+    expect(text).not.toContain("je t'envoie");
+    expect(containsMediaPromise(text)).toBe(false);
+  });
+
+  it('keeps the promise in the text when the media was actually sent', async () => {
+    const tmedia: ActiveMedia = {
+      id: 7,
+      title: 'Exclusive video',
+      description: null,
+      type: 'VIDEO',
+      priceStars: 50,
+      triggerType: 'AI',
+      triggerValue: null,
+    };
+    h.deps.env.mediaMessageThreshold = 999;
+    h.mediaService.selectForUser.mockResolvedValue(tmedia);
+    h.responseService.generateReply.mockResolvedValue({
+      text: "voilà ma vidéo 😉",
+      shouldSendPaidMedia: true,
+      mediaId: 7,
+      reason: 'fits',
+      provider: 'test',
+    });
+
+    await handleBusinessMessage(makeCtx('je veux ta vidéo'), h.deps);
+
+    const send = h.calls.find((c) => c.kind === 'sendMessage');
+    expect((send?.args as Record<string, unknown>)['text']).toBe('voilà ma vidéo 😉');
+    expect(h.calls.filter((c) => c.kind === 'sendPaidMedia')).toHaveLength(1);
+  });
+
+  it('proposes a paid media after the message threshold (3 messages)', async () => {
+    const d = buildDeps({
+      env: {
+        allowedChatIds: new Set<number>(),
+        historyLimit: 10,
+        preferLanguage: 'en',
+        mediaTriggerMode: 'ai',
+        mediaCooldownMs: 0,
+        mediaTimeMs: 0,
+        mediaMessageThreshold: 3,
+        mediaPhotoRequestEnabled: true,
+        humanize: { enabled: false, baseMs: 0, extraMaxMs: 0, msPerChar: 0, maxMs: 0 },
+      } as unknown as EnvConfig,
+    });
+    d.deps.conversationService.recordInbound = vi.fn(async () => ({
+      message: { id: 1, telegramMessageId: 42, direction: 'IN', text: 'hi', createdAt: new Date() },
+      messageCount: 3,
+    })) as unknown as ConversationService['recordInbound'];
+    const tmedia: ActiveMedia = {
+      id: 5,
+      title: 'Exclusive photo',
+      description: null,
+      type: 'PHOTO',
+      priceStars: 20,
+      triggerType: 'AI',
+      triggerValue: null,
+    };
+    d.mediaService.listActiveCatalog.mockResolvedValue([tmedia]);
+    d.mediaService.selectForUser.mockResolvedValue(tmedia);
+    // The AI does not suggest media — the 3-message threshold alone triggers.
+    d.responseService.generateReply.mockResolvedValue({
+      text: 'hey 😊',
+      shouldSendPaidMedia: false,
+      mediaId: null,
+      reason: null,
+      provider: 'test',
+    });
+
+    await handleBusinessMessage(makeCtx('third message'), d.deps);
+
+    const send = d.calls.find((c) => c.kind === 'sendPaidMedia');
+    expect(send).toBeDefined();
+    expect(d.proposalRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaId: 5, status: 'SENT' }),
+    );
+  });
+
+  it('proposes a paid media when the user asks for a photo of her', async () => {
+    const tmedia: ActiveMedia = {
+      id: 7,
+      title: 'Leak set',
+      description: null,
+      type: 'PHOTO',
+      priceStars: 30,
+      triggerType: 'AI',
+      triggerValue: null,
+    };
+    // High threshold so ONLY the photo-request trigger fires.
+    h.deps.env.mediaMessageThreshold = 999;
+    h.mediaService.selectForUser.mockResolvedValue(tmedia);
+
+    await handleBusinessMessage(makeCtx('envoie une photo de toi 😉'), h.deps);
+
+    const send = h.calls.find((c) => c.kind === 'sendPaidMedia');
+    expect(send).toBeDefined();
+    expect(h.mediaService.selectForUser).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'photo_request' }),
+    );
+    expect(h.proposalRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaId: 7, status: 'SENT' }),
+    );
+  });
+
+  it('does not propose on a photo request when the feature is disabled', async () => {
+    h.deps.env.mediaMessageThreshold = 999;
+    h.deps.env.mediaPhotoRequestEnabled = false;
+    h.mediaService.selectForUser.mockResolvedValue({
+      id: 7,
+      title: 'Leak set',
+      description: null,
+      type: 'PHOTO',
+      priceStars: 30,
+      triggerType: 'AI',
+      triggerValue: null,
+    });
+
+    await handleBusinessMessage(makeCtx('envoie une photo de toi'), h.deps);
+
+    expect(h.calls.filter((c) => c.kind === 'sendPaidMedia')).toHaveLength(0);
   });
 });
